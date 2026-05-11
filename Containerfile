@@ -6,16 +6,17 @@ WORKDIR /app
 # Install build deps (needed for image crate C components)
 RUN apt-get update && apt-get install -y pkg-config && rm -rf /var/lib/apt/lists/*
 
-# Cache dependencies by building a stub binary first
+# Cache dependencies by building a stub binary first.
+# At this stage there's no src/lib.rs and no handlers.rs, so rust-embed's
+# RustEmbed derive never runs — only the deps get downloaded & compiled.
 COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src static && \
+RUN mkdir -p src && \
     echo 'fn main(){}' > src/main.rs && \
-    echo '' > static/index.html && \
     cargo build --release --locked && \
-    rm -rf src static
+    rm -rf src
 
 # Build the real binary
-COPY src   ./src
+COPY src    ./src
 COPY static ./static
 RUN touch src/main.rs && cargo build --release --locked
 
