@@ -9,7 +9,9 @@ export async function loadPhotos() {
   dom.prog.style.width = '30%';
   try {
     const [photosRes] = await Promise.all([
-      fetch('/api/photos?sort=' + encodeURIComponent(state.currentSort)).then(r => r.json()),
+      fetch('/api/photos?sort=' + encodeURIComponent(state.currentSort), {
+        cache: 'no-store',
+      }).then(r => r.json()),
       fetchStagedOps(),
     ]);
     state.photos = Array.isArray(photosRes) ? photosRes : (photosRes.photos || []);
@@ -28,7 +30,7 @@ export async function loadPhotos() {
 
 export async function fetchStagedOps() {
   try {
-    const res  = await fetch('/api/stage/list');
+    const res  = await fetch('/api/stage/list', { cache: 'no-store' });
     const list = await res.json();
     state.stagedDeletes    = new Set(list.filter(o => o.kind === 'delete').map(o => o.src));
     state.stagedRenameSrcs = new Set(list.filter(o => o.kind === 'rename').map(o => o.src));
@@ -99,7 +101,7 @@ export async function clearAllStaged() {
 }
 
 export async function refreshStagedList() {
-  const res  = await fetch('/api/stage/list');
+  const res  = await fetch('/api/stage/list', { cache: 'no-store' });
   const list = await res.json();
   const html = list.length ? list.map(o => `
     <div class="staged-item">
