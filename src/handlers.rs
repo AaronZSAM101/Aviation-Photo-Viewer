@@ -7,7 +7,7 @@ use axum::{
 use std::{collections::HashMap, path::PathBuf, time::UNIX_EPOCH};
 use tokio::fs;
 
-use crate::models::{AppState, PhotoMeta, PhotosQuery, CachedMeta};
+use crate::models::{AppState, PhotoMeta, PhotosQuery, CachedMeta, PagedPhotos};
 use crate::exif::extract_exif;
 use crate::utils::safe_subpath;
 
@@ -29,7 +29,7 @@ pub async fn serve_frontend() -> Html<&'static str> {
 pub async fn list_photos(
     Query(q): Query<PhotosQuery>,
     State(state): State<AppState>,
-) -> Json<Vec<PhotoMeta>> {
+) -> Json<PagedPhotos> {
     struct WalkEntry {
         path: PathBuf,
         subpath: String,
@@ -107,40 +107,47 @@ pub async fn list_photos(
         }
     }
 
-    // 步骤3：使用rayon并行迭代器提取未缓存的元数据
+    // 步骤3（改进）：不要在响应期间同步提取所有 EXIF，改为：
+    //  - 立即返回列表（未命中的条目使用默认 EXIF），
+    //  - 在后台异步提取并更新缓存以加速后续请求
     let to_extract_batch = to_extract;
-    let extracted_results = tokio::task::spawn_blocking(move || {
-        use rayon::prelude::*;
-        to_extract_batch
-            .into_par_iter()
-            .map(|(i, path, subpath, mtime, size)| {
-                let (mut exif, sort_key) = extract_exif(&path);
-                if exif.image_width.is_none() || exif.image_height.is_none() {
-                    if let Ok((w, h)) = image::image_dimensions(&path) {
-                        exif.image_width = Some(w);
-                        exif.image_height = Some(h);
-                    }
-                }
-                (i, subpath, mtime, size, exif, sort_key)
+    let extracted = 0usize;
+
+    if !to_extract_batch.is_empty() {
+        let bg_items = to_extract_batch.clone();
+        let bg_state = state.clone();
+        // 在后台做阻塞的并行提取，不阻塞当前请求
+        tokio::spawn(async move {
+            let results: Result<Vec<(String, CachedMeta)>, _> = tokio::task::spawn_blocking(move || {
+                use rayon::prelude::*;
+                bg_items
+                    .into_par_iter()
+                    .map(|(_i, path, subpath, mtime, size)| {
+                        let (mut exif, sort_key) = extract_exif(&path);
+                        if exif.image_width.is_none() || exif.image_height.is_none() {
+                            if let Ok((w, h)) = image::image_dimensions(&path) {
+                                exif.image_width = Some(w);
+                                exif.image_height = Some(h);
+                            }
+                        }
+                        (subpath, CachedMeta { mtime, size, exif, sort_key })
+                    })
+                    .collect::<Vec<_>>()
             })
-            .collect::<Vec<_>>()
-    })
-    .await
-    .unwrap_or_default();
+            .await;
 
-    let mut new_cache: Vec<(String, CachedMeta)> = Vec::new();
-    for (i, subpath, mtime, size, exif, sort_key) in extracted_results {
-        cached.insert(i, (exif.clone(), sort_key));
-        new_cache.push((subpath, CachedMeta { mtime, size, exif, sort_key }));
+            if let Ok(new_cache) = results {
+                let mut cache = bg_state.meta_cache.write().await;
+                for (sp, m) in new_cache {
+                    cache.insert(sp, m);
+                }
+            }
+        });
     }
-    let extracted = new_cache.len();
 
-    // 步骤4：将新条目写入缓存，清除已删除文件的缓存
+    // 步骤4：清除已删除文件的缓存（立即执行以避免缓存无限增长）
     {
         let mut cache = state.meta_cache.write().await;
-        for (sp, m) in new_cache {
-            cache.insert(sp, m);
-        }
         let live: std::collections::HashSet<String> =
             entries.iter().map(|e| e.subpath.clone()).collect();
         cache.retain(|k, _| live.contains(k));
@@ -148,7 +155,10 @@ pub async fn list_photos(
 
     // 步骤5：组装PhotoMeta列表并排序
     let mut photos: Vec<PhotoMeta> = entries.into_iter().enumerate().map(|(i, e)| {
-        let (exif, sort_key) = cached.remove(&i).unwrap_or_default();
+        let (exif, sort_key) = match cached.remove(&i) {
+            Some((exif, sk)) => (exif, sk),
+            None => (crate::models::ExifData::default(), e.mtime as i64),
+        };
         PhotoMeta {
             filename: e.filename,
             folder: e.folder,
@@ -168,11 +178,30 @@ pub async fn list_photos(
     }
 
     tracing::info!(
-        "list_photos: {} files, {} cached, {} extracted in {:?}",
-        total, hits, extracted, started.elapsed()
+        "list_photos: {} files, {} cached, {} extracted in {:?} (limit={:?} offset={:?})",
+        total, hits, extracted, started.elapsed(), q.limit, q.offset
     );
 
-    Json(photos)
+    // 支持分页：若未传 limit (或为 0)，返回全部；否则返回分页结果
+    let limit = q.limit.unwrap_or(0) as usize;
+    let offset = q.offset.unwrap_or(0) as usize;
+    let total_u32 = total as u32;
+
+    let photos_page: Vec<PhotoMeta> = if limit == 0 {
+        photos
+    } else {
+        photos.into_iter().skip(offset).take(limit).collect()
+    };
+
+    let has_more = offset + photos_page.len() < total;
+
+    Json(PagedPhotos {
+        photos: photos_page,
+        total: total_u32,
+        limit: limit as u32,
+        offset: offset as u32,
+        has_more,
+    })
 }
 
 /// 提供原始照片

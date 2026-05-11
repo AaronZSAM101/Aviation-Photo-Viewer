@@ -238,6 +238,7 @@ input[type="text"]:focus,input[type="search"]:focus{outline:none;border-color:va
     <button id="btn-trash">♻️ 回收站</button>
     <button id="btn-shortcuts">⌨ 快捷键</button>
 
+    <button id="btn-load-more" style="display:none">加载更多</button>
     <span class="stats" id="stats">—</span>
   </div>
 </header>
@@ -455,6 +456,9 @@ let fineGridOn = false;
 let rgbOn      = false;
 let histOn     = false;
 let infoOn     = true;
+const PAGE_LIMIT = 500;
+let currentOffset = 0;
+let hasMore = false;
 
 // 🚀 性能优化：图片加载队列管理
 class ImageLoader {
@@ -619,11 +623,26 @@ async function loadPhotos() {
   loadingMsg.textContent = '读取照片…';
   prog.style.width = '30%';
   try {
+    const params = new URLSearchParams();
+    params.set('sort', currentSort);
+    params.set('limit', String(PAGE_LIMIT));
+    params.set('offset', '0');
+
     const [photosRes] = await Promise.all([
-      fetch('/api/photos?sort=' + currentSort).then(r => r.json()),
+      fetch('/api/photos?' + params.toString()).then(r => r.json()),
       fetchStagedOps(),
     ]);
-    photos = photosRes;
+    // 兼容：后端可能返回旧的数组或新的分页对象
+    if (Array.isArray(photosRes)) {
+      photos = photosRes;
+      hasMore = photos.length === PAGE_LIMIT;
+      currentOffset = photos.length;
+    } else {
+      photos = photosRes.photos || [];
+      hasMore = !!photosRes.has_more;
+      currentOffset = (photosRes.offset || 0) + photos.length;
+    }
+    $('btn-load-more').style.display = hasMore ? 'inline-block' : 'none';
     syncSelectionWithPhotos();
     prog.style.width = '100%';
     render();
@@ -633,6 +652,43 @@ async function loadPhotos() {
     setTimeout(() => { loading.classList.remove('show'); prog.style.width = '0'; }, 300);
   }
 }
+
+async function loadMorePhotos() {
+  if (!hasMore) return;
+  loading.classList.add('show');
+  loadingMsg.textContent = '加载更多…';
+  prog.style.width = '30%';
+  try {
+    const params = new URLSearchParams();
+    params.set('sort', currentSort);
+    params.set('limit', String(PAGE_LIMIT));
+    params.set('offset', String(currentOffset));
+    const res = await fetch('/api/photos?' + params.toString()).then(r => r.json());
+    const more = Array.isArray(res) ? res : (res.photos || []);
+    photos = photos.concat(more);
+    if (Array.isArray(res)) {
+      hasMore = more.length === PAGE_LIMIT;
+      currentOffset += more.length;
+    } else {
+      hasMore = !!res.has_more;
+      currentOffset = (res.offset || currentOffset) + more.length;
+    }
+    $('btn-load-more').style.display = hasMore ? 'inline-block' : 'none';
+    syncSelectionWithPhotos();
+    render();
+  } catch (e) {
+    console.error('加载更多失败', e);
+  } finally {
+    loading.classList.remove('show');
+    loadingMsg.textContent = '加载中…';
+    prog.style.width = '0';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = $('btn-load-more');
+  if (btn) btn.addEventListener('click', loadMorePhotos);
+});
 
 async function fetchStagedOps() {
   try {

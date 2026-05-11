@@ -3,7 +3,7 @@ use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 
 /// 存储EXIF元数据
-#[derive(Debug, Default, Serialize, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone)]
 pub struct ExifData {
     pub date_taken: Option<String>,
     pub make: Option<String>,
@@ -26,7 +26,7 @@ pub struct ExifData {
 }
 
 /// 缓存的元数据
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CachedMeta {
     pub mtime: u64,
     pub size: u64,
