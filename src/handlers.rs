@@ -153,6 +153,7 @@ pub async fn list_photos(
             filename: e.filename,
             folder: e.folder,
             size: e.size,
+            mtime: e.mtime,
             exif,
             date_sort_key: sort_key,
         }
@@ -202,14 +203,27 @@ pub async fn serve_thumb(
     }
 
     let cache_key = subpath.clone();
+    let path = state.photos_dir.join(&subpath);
+    let metadata = fs::metadata(&path)
+        .await
+        .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
+    let mtime = metadata
+        .modified()
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
+        .as_secs();
+    let size = metadata.len();
+
     {
         let cache = state.thumb_cache.read().await;
-        if let Some(data) = cache.get(&cache_key) {
-            return Ok(([(header::CONTENT_TYPE, "image/jpeg")], data.clone()));
+        if let Some((cached_mtime, cached_size, data)) = cache.get(&cache_key) {
+            if *cached_mtime == mtime && *cached_size == size {
+                return Ok(([(header::CONTENT_TYPE, "image/jpeg")], data.clone()));
+            }
         }
     }
 
-    let path = state.photos_dir.join(&subpath);
     let thumb_data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ()> {
         let img = image::open(&path).map_err(|_| ())?;
         let thumb = img.thumbnail(400, 400);
@@ -230,7 +244,7 @@ pub async fn serve_thumb(
         .thumb_cache
         .write()
         .await
-        .insert(cache_key, thumb_data.clone());
+        .insert(cache_key, (mtime, size, thumb_data.clone()));
 
     Ok(([(header::CONTENT_TYPE, "image/jpeg")], thumb_data))
 }
@@ -245,14 +259,27 @@ pub async fn serve_preview(
     }
 
     let cache_key = subpath.clone();
+    let path = state.photos_dir.join(&subpath);
+    let metadata = fs::metadata(&path)
+        .await
+        .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
+    let mtime = metadata
+        .modified()
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
+        .as_secs();
+    let size = metadata.len();
+
     {
         let cache = state.preview_cache.read().await;
-        if let Some((data, mime)) = cache.get(&cache_key) {
-            return Ok(([(header::CONTENT_TYPE, mime.clone())], data.clone()));
+        if let Some((cached_mtime, cached_size, data, mime)) = cache.get(&cache_key) {
+            if *cached_mtime == mtime && *cached_size == size {
+                return Ok(([(header::CONTENT_TYPE, mime.clone())], data.clone()));
+            }
         }
     }
 
-    let path = state.photos_dir.join(&subpath);
     let result = tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String), ()> {
         // 廉价的头部探测：当图片已经足够小时避免完整解码
         if let Ok((w, h)) = image::image_dimensions(&path) {
@@ -283,7 +310,7 @@ pub async fn serve_preview(
         .preview_cache
         .write()
         .await
-        .insert(cache_key, (result.0.clone(), result.1.clone()));
+        .insert(cache_key, (mtime, size, result.0.clone(), result.1.clone()));
 
     Ok(([(header::CONTENT_TYPE, result.1)], result.0))
 }

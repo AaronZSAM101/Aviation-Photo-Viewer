@@ -38,10 +38,10 @@ pub struct CachedMeta {
 #[derive(Clone)]
 pub struct AppState {
     pub photos_dir: Arc<PathBuf>,
-    /// 文件名 → JPEG 缩略图字节
-    pub thumb_cache: Arc<RwLock<HashMap<String, Vec<u8>>>>,
-    /// 相对路径 → (预览字节, mime类型)
-    pub preview_cache: Arc<RwLock<HashMap<String, (Vec<u8>, String)>>>,
+    /// 相对路径 → (mtime, size, JPEG 缩略图字节)
+    pub thumb_cache: Arc<RwLock<HashMap<String, (u64, u64, Vec<u8>)>>>,
+    /// 相对路径 → (mtime, size, 预览字节, mime类型)
+    pub preview_cache: Arc<RwLock<HashMap<String, (u64, u64, Vec<u8>, String)>>>,
     /// 待应用的文件操作
     pub staged_ops: Arc<RwLock<Vec<StagedOp>>>,
     /// 相对路径 → 缓存的EXIF元数据
@@ -77,6 +77,7 @@ pub struct PhotoMeta {
     /// 相对于根目录的子文件夹路径，空字符串表示根目录
     pub folder: String,
     pub size: u64,
+    pub mtime: u64,
     pub exif: ExifData,
     /// 紧凑时间戳 (YYYYMMDDHHMMSS) 用于排序
     pub date_sort_key: i64,

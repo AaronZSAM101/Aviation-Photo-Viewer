@@ -536,6 +536,20 @@ function encodePath(p) {
   return p.split('/').map(encodeURIComponent).join('/');
 }
 
+function photoVersion(p) {
+  const mtime = Number.isFinite(p?.mtime) ? p.mtime : 0;
+  const size = Number.isFinite(p?.size) ? p.size : 0;
+  return `${mtime}-${size}`;
+}
+
+function thumbUrl(p) {
+  return `/thumb/${encodePath(subpath(p))}?v=${photoVersion(p)}`;
+}
+
+function previewUrl(p) {
+  return `/preview/${encodePath(subpath(p))}?v=${photoVersion(p)}`;
+}
+
 function syncSelectionWithPhotos() {
   if (!selectedSubpaths.size) return;
   const valid = new Set(photos.map(p => subpath(p)));
@@ -934,7 +948,7 @@ function makeCard(p, idx, photosIdx) {
         <input type="checkbox" class="selchk" data-idx="${photosIdx}"${isSelected ? ' checked' : ''}>
       </label>
       <div class="loader"></div>
-      <img data-src="/thumb/${encodePath(sp)}" alt="${p.filename}">
+      <img data-src="${thumbUrl(p)}" alt="${p.filename}">
       ${!hasExif ? '<span class="badge no-exif">NO EXIF</span>' : ''}
       ${isStaged ? '<span class="badge staged">待删除</span>' : ''}
       ${isRenamed ? `<span class="badge rename" title="${renameBadgeTitle(sp)}">${renameText}</span>` : ''}
@@ -1081,7 +1095,7 @@ function showCurrent() {
     prefetchAdjacent();
   };
   vImg.onerror = () => { vSpin.classList.remove('show'); };
-  vImg.src = '/preview/' + encodePath(sp);
+  vImg.src = previewUrl(p);
 
   renderInfoPanel(p);
   updateViewerStagedIndicator();
@@ -1094,7 +1108,7 @@ function prefetchAdjacent() {
     const p = filteredPhotos[i];
     if (!p) return;
     const img = new Image();
-    img.src = '/preview/' + encodePath(subpath(p));
+    img.src = previewUrl(p);
   });
 }
 
