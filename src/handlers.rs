@@ -7,7 +7,7 @@ use axum::{
 use std::{collections::HashMap, path::PathBuf, time::UNIX_EPOCH};
 use tokio::fs;
 
-use crate::models::{AppState, PhotoMeta, PhotosQuery, CachedMeta, PagedPhotos};
+use crate::models::{AppState, PhotoMeta, PhotosQuery, CachedMeta};
 use crate::exif::extract_exif;
 use crate::utils::safe_subpath;
 
@@ -29,7 +29,7 @@ pub async fn serve_frontend() -> Html<&'static str> {
 pub async fn list_photos(
     Query(q): Query<PhotosQuery>,
     State(state): State<AppState>,
-) -> Json<PagedPhotos> {
+) -> Json<Vec<PhotoMeta>> {
     struct WalkEntry {
         path: PathBuf,
         subpath: String,
@@ -178,30 +178,11 @@ pub async fn list_photos(
     }
 
     tracing::info!(
-        "list_photos: {} files, {} cached, {} extracted in {:?} (limit={:?} offset={:?})",
-        total, hits, extracted, started.elapsed(), q.limit, q.offset
+        "list_photos: {} files, {} cached, {} extracted in {:?}",
+        total, hits, extracted, started.elapsed()
     );
 
-    // 支持分页：若未传 limit (或为 0)，返回全部；否则返回分页结果
-    let limit = q.limit.unwrap_or(0) as usize;
-    let offset = q.offset.unwrap_or(0) as usize;
-    let total_u32 = total as u32;
-
-    let photos_page: Vec<PhotoMeta> = if limit == 0 {
-        photos
-    } else {
-        photos.into_iter().skip(offset).take(limit).collect()
-    };
-
-    let has_more = offset + photos_page.len() < total;
-
-    Json(PagedPhotos {
-        photos: photos_page,
-        total: total_u32,
-        limit: limit as u32,
-        offset: offset as u32,
-        has_more,
-    })
+    Json(photos)
 }
 
 /// 提供原始照片

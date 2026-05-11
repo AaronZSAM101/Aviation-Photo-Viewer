@@ -87,18 +87,4 @@ pub struct PhotoMeta {
 #[derive(Deserialize)]
 pub struct PhotosQuery {
     pub sort: Option<String>,
-    #[serde(default)]
-    pub limit: Option<u32>,
-    #[serde(default)]
-    pub offset: Option<u32>,
-}
-
-/// 分页照片响应
-#[derive(Debug, Serialize)]
-pub struct PagedPhotos {
-    pub photos: Vec<PhotoMeta>,
-    pub total: u32,
-    pub limit: u32,
-    pub offset: u32,
-    pub has_more: bool,
 }
