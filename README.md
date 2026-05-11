@@ -77,7 +77,9 @@ HEIC 暂不支持，需要额外的 C 库依赖。
 
 ## 项目架构
 
-代码采用模块化设计，从最早的单文件 900 行 `main.rs` 拆成了 8 个职责清晰的模块，总体约 1000 行。
+代码前后端均采用模块化设计。后端 8 个 Rust 模块约 1000 行，前端 9 个 ES Module 约 1400 行（含 CSS）。
+
+### 后端（Rust）
 
 ```
 src/
@@ -85,22 +87,53 @@ src/
 ├── main.rs         (66 行)   应用启动、路由注册
 ├── models.rs       (89 行)   数据类型（AppState、ExifData、PhotoMeta、OpKind…）
 ├── exif.rs         (165 行)  EXIF 元数据提取与解析
-├── handlers.rs     (289 行)  HTTP 请求处理（列表、缩略图、预览）
+├── handlers.rs     (~290 行) HTTP 请求处理 + 静态资源 (rust-embed)
 ├── file_ops.rs     (270 行)  文件操作、暂存队列、垃圾回收（.trash）
 ├── hash.rs         (84 行)   SHA256 + 感知哈希（aHash），照片对比
 └── utils.rs        (24 行)   工具函数（路径安全检查、ahash 算法）
 ```
 
-### 模块职责
-
 | 模块 | 职责 |
 |------|------|
 | `models` | 全局状态与数据类型定义 |
 | `exif` | `extract_exif()`、`date_to_sort_key()`、GPS 坐标转换、有理数处理 |
-| `handlers` | 路由处理函数，含图片列表、缩略图、预览 |
+| `handlers` | 路由处理函数（图片列表/缩略图/预览/前端入口/`/static/*` 静态资源） |
 | `file_ops` | 文件删除/移动/复制/重命名，操作队列与 `.trash` 目录 |
 | `hash` | 文件 SHA256 与感知哈希，重复照片检测 |
 | `utils` | `safe_subpath()` 路径校验、`compute_ahash()` |
+
+### 前端（静态资源全部嵌入二进制）
+
+整个 `static/` 目录通过 [`rust-embed`](https://crates.io/crates/rust-embed) 在编译期打包进可执行文件，运行时不需要任何外部资源文件。
+
+```
+static/
+├── index.html              (233 行)  纯 DOM 模板，无内联 JS / CSS
+├── css/
+│   └── styles.css          (184 行)  全部样式
+└── js/                                ES Modules（type="module"）
+    ├── main.js             (6 行)    入口
+    ├── state.js            (125 行)  state 对象 + DOM 引用 + ImageLoader
+    ├── utils.js            (63 行)   纯函数：fmt_*, subpath, thumbUrl…
+    ├── selection.js        (63 行)   选择逻辑
+    ├── api.js              (156 行)  所有 fetch（照片/暂存/回收站）
+    ├── render.js           (364 行)  网格渲染 + 搜索 + 虚拟滚动
+    ├── viewer.js           (281 行)  全屏查看器 + 直方图 + 网格 overlay
+    ├── file-ops.js         (96 行)   文件操作 modal（rename/move/copy）
+    └── events.js           (257 行)  事件绑定 + 键盘快捷键 + 右键菜单
+```
+
+| 模块 | 职责 |
+|------|------|
+| `state` | 全局可变状态 `state` 对象、所有 `getElementById` 引用、`ImageLoader` 单例 |
+| `utils` | 纯函数：格式化、路径与 URL、`hasAnyExif` 等，无副作用 |
+| `selection` | 卡片多选（含 Shift 范围选 / Cmd 追加选） |
+| `api` | 所有 `fetch` 调用、`closeModal` |
+| `render` | 主渲染入口、按文件夹/时间分组、虚拟滚动、暂存徽标 |
+| `viewer` | 查看器开关与导航、EXIF 面板、污点检查、RGB/直方图、网格对齐 |
+| `file-ops` | 文件操作 modal（rename / move / copy）的状态机与提交 |
+| `events` | 把上面所有模块的功能挂到 DOM 事件上 |
+| `main` | 入口：调用 `bindAllEvents()` + `loadPhotos()` |
 
 ### 关键设计
 
@@ -110,7 +143,9 @@ src/
 
 **并行处理** — 文件 I/O 跑在 blocking pool（避免阻塞 tokio 调度）；EXIF 提取通过 `rayon` 并行。
 
-**模块化收益** — 单一职责、改动影响范围小、错误定位明确、便于写单元测试与未来扩展（持久化缓存、全文搜索等）。
+**前端模块化** — 用单一 `state` 对象集中可变状态，所有跨模块共享通过对象属性读写，避免 `export let` + setter 的繁琐写法。模块间存在循环依赖（render ↔ viewer，api → render → viewer → api），但所有跨模块调用都发生在事件回调里，ES Module live bindings 能正确处理。
+
+**静态资源嵌入** — 用 `rust-embed` 把 `static/` 整个目录在编译期打包进二进制，运行时通过 `/static/*path` 路由提供。新增 CSS / JS / 字体文件不需要改 Rust 代码。
 
 ---
 
