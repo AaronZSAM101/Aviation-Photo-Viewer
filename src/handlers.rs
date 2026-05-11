@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, Query, State},
-    http::header,
-    response::{Html, IntoResponse},
+    http::{header, StatusCode},
+    response::{Html, IntoResponse, Response},
     Json,
 };
 use std::{collections::HashMap, path::PathBuf, time::UNIX_EPOCH};
@@ -11,8 +11,10 @@ use crate::models::{AppState, PhotoMeta, PhotosQuery, CachedMeta};
 use crate::exif::extract_exif;
 use crate::utils::safe_subpath;
 
-/// 前端HTML
-const FRONTEND: &str = include_str!("../static/index.html");
+/// 把整个 static/ 目录嵌入二进制（编译期）
+#[derive(rust_embed::RustEmbed)]
+#[folder = "static/"]
+struct StaticAssets;
 
 /// 支持的图片扩展名
 const SUPPORTED_EXTS: &[&str] = &["jpg", "jpeg", "png", "tiff", "tif", "webp"];
@@ -20,9 +22,33 @@ const SUPPORTED_EXTS: &[&str] = &["jpg", "jpeg", "png", "tiff", "tif", "webp"];
 /// 预览图片最大尺寸
 const PREVIEW_MAX: u32 = 2400;
 
-/// 返回前端HTML
-pub async fn serve_frontend() -> Html<&'static str> {
-    Html(FRONTEND)
+/// 返回前端 index.html
+pub async fn serve_frontend() -> Response {
+    match StaticAssets::get("index.html") {
+        Some(content) => {
+            let body = std::str::from_utf8(content.data.as_ref())
+                .unwrap_or("")
+                .to_string();
+            Html(body).into_response()
+        }
+        None => (StatusCode::NOT_FOUND, "index.html not embedded").into_response(),
+    }
+}
+
+/// 服务 /static/* 下的所有静态资源（CSS / JS / 图片等）
+/// 路由捕获的 `path` 已经不含 "static/" 前缀
+pub async fn serve_static(Path(path): Path<String>) -> Response {
+    match StaticAssets::get(&path) {
+        Some(content) => {
+            let mime = mime_guess::from_path(&path).first_or_octet_stream();
+            (
+                [(header::CONTENT_TYPE, mime.as_ref())],
+                content.data,
+            )
+                .into_response()
+        }
+        None => (StatusCode::NOT_FOUND, "Not found").into_response(),
+    }
 }
 
 /// 列出所有照片（含EXIF元数据）
