@@ -1,6 +1,13 @@
-/// 检查路径是否安全（不包含空值和".."）
+use std::path::{Component, Path};
+
+/// 检查路径是否安全（必须是非空的相对路径，且不能包含父目录/根路径）
 pub fn safe_subpath(p: &str) -> bool {
-    !p.is_empty() && !p.contains("..")
+    if p.is_empty() {
+        return false;
+    }
+
+    let path = Path::new(p);
+    path.components().all(|component| matches!(component, Component::Normal(_)))
 }
 
 /// 计算8x8 Average Hash (aHash)用于感知哈希
