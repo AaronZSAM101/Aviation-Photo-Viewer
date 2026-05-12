@@ -181,9 +181,13 @@ pub async fn list_photos(
 
     // 步骤5：组装PhotoMeta列表并排序
     let mut photos: Vec<PhotoMeta> = entries.into_iter().enumerate().map(|(i, e)| {
+        // 缓存未命中时（新文件 / 重命名后 / EXIF 还在后台异步提取），
+        // 返回 sort_key=0 作为占位。前端的 timeGroupOf 用 `if (!k)` 判断后
+        // 会归到「未知日期」组；之前曾误用 `e.mtime`（Unix 时间戳，10 位），
+        // 让前端按 14 位 YYYYMMDDHHMMSS 解析后显示成 "0000 年 17 月"。
         let (exif, sort_key) = match cached.remove(&i) {
             Some((exif, sk)) => (exif, sk),
-            None => (crate::models::ExifData::default(), e.mtime as i64),
+            None => (crate::models::ExifData::default(), 0i64),
         };
         PhotoMeta {
             filename: e.filename,
