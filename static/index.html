@@ -47,6 +47,7 @@
     <button id="btn-collapse">折叠全部</button>
 
     <div class="sep"></div>
+    <button id="btn-bulk-move">📁 批量移动</button>
     <button id="btn-bulk-delete">🗑️ 批量删除</button>
     <button id="btn-stage-apply">✅ 应用分批</button>
     <button id="btn-stage-list">📄 分批列表</button>
@@ -189,6 +190,27 @@
     <div class="modal-footer">
       <button data-close-modal="modal-file-op">取消</button>
       <button id="btn-commit-file-op" class="primary">确定</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-bulk-move" class="modal">
+  <div class="modal-content">
+    <div class="modal-header">
+      <h2 class="modal-title">批量移动</h2>
+      <button class="modal-close" data-close-modal="modal-bulk-move">×</button>
+    </div>
+    <div class="modal-body">
+      <label style="font-size:11px;color:var(--muted)">选中的照片数量:</label>
+      <div id="modal-bulk-move-count" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--accent2);margin-bottom:12px">—</div>
+      
+      <label style="font-size:11px;color:var(--muted)">目标文件夹:</label>
+      <select id="modal-bulk-move-folder" style="width:100%;margin-bottom:8px"></select>
+      <div id="modal-bulk-move-preview" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--accent2)"></div>
+    </div>
+    <div class="modal-footer">
+      <button data-close-modal="modal-bulk-move">取消</button>
+      <button id="btn-commit-bulk-move" class="primary">确定</button>
     </div>
   </div>
 </div>

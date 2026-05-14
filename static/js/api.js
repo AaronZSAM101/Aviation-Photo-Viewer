@@ -2,6 +2,7 @@
 import { dom, state } from './state.js';
 import { syncSelectionWithPhotos, clearSelection } from './selection.js';
 import { render, updateCardStagedIndicators } from './render.js';
+import { joinSubpath, splitSubpath } from './utils.js';
 
 export async function loadPhotos() {
   dom.loading.classList.add('show');
@@ -75,6 +76,24 @@ export async function stageBulkDelete() {
   await fetchStagedOps();
   updateCardStagedIndicators();
   alert('已加入分批（删除）');
+}
+
+export async function stageBulkMove(dstFolder) {
+  const sels = [...state.selectedSubpaths];
+  if (!sels.length) { alert('请先选择要移动的照片'); return; }
+  for (const s of sels) {
+    const parsed = splitSubpath(s);
+    const dst = joinSubpath(dstFolder, parsed.name);
+    await fetch('/api/stage', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'move', src: s, dst }),
+    });
+  }
+  clearSelection();
+  await fetchStagedOps();
+  updateCardStagedIndicators();
+  alert('已加入分批（移动）');
 }
 
 export async function applyStaged() {

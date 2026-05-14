@@ -84,6 +84,9 @@ export const state = {
   // 文件操作 modal
   pendingFileOp: { kind: null, src: null, srcFolder: '', srcName: '' },
 
+  // 批量移动 modal
+  pendingBulkMove: { selectedCount: 0 },
+
   // 卡片右键菜单
   cardMenuSrc:     null,
   cardMenuSrcs:    [],

@@ -15,7 +15,7 @@ import {
   fitGridToImage, refreshHistograms, syncToggleButtons,
   viewerToggleDelete, currentViewerSubpath,
 } from './viewer.js';
-import { openFileOpDialog, commitFileOp } from './file-ops.js';
+import { openFileOpDialog, commitFileOp, openBulkMoveDialog, commitBulkMove } from './file-ops.js';
 import { syncSelectionUI } from './selection.js';
 
 function openShortcutsModal() {
@@ -132,6 +132,7 @@ export function bindAllEvents() {
     render();
   });
   $('btn-bulk-delete').addEventListener('click', stageBulkDelete);
+  $('btn-bulk-move').addEventListener('click', openBulkMoveDialog);
   $('btn-stage-list').addEventListener('click', showStagedList);
   $('btn-stage-apply').addEventListener('click', () => {
     $('modal-staged').classList.add('show');
@@ -153,6 +154,8 @@ export function bindAllEvents() {
   $('btn-apply-staged').addEventListener('click', applyStaged);
   // 文件操作 modal 内的「确定」
   $('btn-commit-file-op').addEventListener('click', commitFileOp);
+  // 批量移动 modal 内的「确定」
+  $('btn-commit-bulk-move').addEventListener('click', commitBulkMove);
 
   // 分批列表 / 回收站列表的事件委托：动态生成的按钮通过 data-action 绑定
   $('staged-list').addEventListener('click', e => {
@@ -201,7 +204,7 @@ export function bindAllEvents() {
       if (kind === 'delete') {
         for (const s of srcs) await stageSingleDelete(s);
       } else if (kind === 'move') {
-        alert(`批量移动 (${srcs.length} 个文件)：请逐一处理`);
+        openBulkMoveDialog();
       } else if (kind === 'copy') {
         alert(`批量复制 (${srcs.length} 个文件)：请逐一处理`);
       }

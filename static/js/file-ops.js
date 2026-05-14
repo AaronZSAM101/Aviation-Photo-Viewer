@@ -2,7 +2,7 @@
 import { state, $ } from './state.js';
 import { subpath, splitSubpath, joinSubpath } from './utils.js';
 import { clearSelection } from './selection.js';
-import { fetchStagedOps, closeModal } from './api.js';
+import { fetchStagedOps, closeModal, stageBulkMove } from './api.js';
 import { render, updateCardStagedIndicators } from './render.js';
 
 function listFolderOptions() {
@@ -90,6 +90,41 @@ export async function commitFileOp() {
   alert('已加入分批');
   closeModal('modal-file-op');
   clearSelection();
+  await fetchStagedOps();
+  updateCardStagedIndicators();
+  render();
+}
+
+export function openBulkMoveDialog() {
+  const sels = [...state.selectedSubpaths];
+  if (!sels.length) { alert('请先选择要移动的照片'); return; }
+  
+  state.pendingBulkMove = { selectedCount: sels.length };
+  
+  $('modal-bulk-move-count').textContent = `${sels.length} 个照片`;
+  
+  const sel = $('modal-bulk-move-folder');
+  const options = listFolderOptions().map(folder => {
+    const label    = folder || '(根目录)';
+    return `<option value="${folder}">${label}</option>`;
+  }).join('');
+  sel.innerHTML = options;
+  
+  const updatePreview = () => {
+    const dstFolder = sel.value;
+    const preview = dstFolder ? `将移动到: ${dstFolder}` : '将移动到: (根目录)';
+    $('modal-bulk-move-preview').textContent = preview;
+  };
+  sel.onchange = updatePreview;
+  updatePreview();
+  
+  $('modal-bulk-move').classList.add('show');
+}
+
+export async function commitBulkMove() {
+  const dstFolder = $('modal-bulk-move-folder').value;
+  await stageBulkMove(dstFolder);
+  closeModal('modal-bulk-move');
   await fetchStagedOps();
   updateCardStagedIndicators();
   render();
