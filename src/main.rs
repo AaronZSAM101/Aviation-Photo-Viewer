@@ -126,6 +126,8 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(handlers::serve_frontend))
+        .route("/view", get(handlers::serve_frontend))
+        .route("/view/*path", get(handlers::serve_frontend))
         .route("/static/*path", get(handlers::serve_static))
         .route("/api/photos", get(handlers::list_photos))
         .route("/photos/*subpath", get(handlers::serve_photo))

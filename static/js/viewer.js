@@ -5,6 +5,7 @@ import {
 } from './utils.js';
 import { stageSingleDelete } from './api.js';
 import { updateCardStagedIndicators } from './render.js';
+import { syncRoute } from './router.js';
 
 export function openViewer(idx) {
   state.viewerIndex = idx;
@@ -18,12 +19,14 @@ export function openViewer(idx) {
   syncToggleButtons();
   dom.viewer.classList.add('show');
   showCurrent();
+  syncRoute();
 }
 
 export function closeViewer() {
   dom.viewer.classList.remove('show');
   dom.vImg.src = '';
   dom.vCanvas.width = dom.vCanvas.height = 0;
+  syncRoute();
 }
 
 export function navigate(delta) {
@@ -33,6 +36,7 @@ export function navigate(delta) {
   if (ni === state.viewerIndex) return;
   state.viewerIndex = ni;
   showCurrent();
+  syncRoute();
 }
 
 function showCurrent() {

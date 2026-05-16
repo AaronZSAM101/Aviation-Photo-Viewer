@@ -54,6 +54,7 @@ podman run --rm \
 | 路由                          | 说明                                          |
 |-------------------------------|-----------------------------------------------|
 | `GET /`                       | 前端页面                                      |
+| `GET /view/:path`             | 前端页面的可刷新查看器路由                   |
 | `GET /api/photos?sort=`       | 照片列表 JSON（含 EXIF）                      |
 | `GET /photos/:path`           | 原图                                          |
 | `GET /thumb/:path`            | 缩略图（400px，内存缓存）                     |
@@ -64,6 +65,8 @@ podman run --rm \
 | `GET /api/compare?a=&b=`      | 对比两张照片（感知哈希）                      |
 
 `sort` 可选值：`date-asc` / `date-desc` / `name-asc` / `name-desc` / `size-desc`
+
+查看器路由会把当前状态写入 URL 查询参数：`sort`、`view`、`scale`、`q`、`collapse`。
 
 ---
 

@@ -6,6 +6,7 @@ import {
   applyStaged, clearAllStaged, refreshStagedList, removeStagedOp,
   showStagedList, showTrash, stageRestore, closeModal,
 } from './api.js';
+import { syncRoute } from './router.js';
 import {
   render, applyCollapseStateToSections, refreshCollapseButton,
   updateCardStagedIndicators,
@@ -116,20 +117,27 @@ export function bindAllEvents() {
   $('sort-sel').addEventListener('change', e => {
     state.currentSort = e.target.value;
     loadPhotos();
+    syncRoute();
   });
-  $('btn-reload').addEventListener('click', loadPhotos);
+  $('btn-reload').addEventListener('click', () => {
+    loadPhotos();
+    syncRoute();
+  });
   $('btn-collapse').addEventListener('click', () => {
     state.collapseAll = !state.collapseAll;
     applyCollapseStateToSections();
     refreshCollapseButton();
+    syncRoute();
   });
   $('view-mode-sel').addEventListener('change', e => {
     state.baseView = e.target.value;
     render();
+    syncRoute();
   });
   $('time-scale-sel').addEventListener('change', e => {
     state.timeScale = e.target.value;
     render();
+    syncRoute();
   });
   $('btn-bulk-delete').addEventListener('click', stageBulkDelete);
   $('btn-bulk-move').addEventListener('click', openBulkMoveDialog);
@@ -143,6 +151,7 @@ export function bindAllEvents() {
   $('search-box').addEventListener('input', e => {
     state.searchTerm = e.target.value;
     render();
+    syncRoute();
   });
 
   // ── Modal 关闭按钮（之前是 onclick 内联）──────────────────────────────
