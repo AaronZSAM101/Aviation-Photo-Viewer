@@ -48,6 +48,9 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
     };
 
     let get = |tag| exif.get_field(tag, exif::In::PRIMARY);
+    let get_any = |tag| {
+        get(tag).or_else(|| exif.fields().find(|f| f.tag == tag))
+    };
     // 移除null字节和周围的引号/空格
     let clean = |s: String| -> String {
         s.chars()
@@ -56,7 +59,7 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
             .trim_matches(|c: char| c == '"' || c == ' ' || c == ',')
             .to_string()
     };
-    let get_str = |tag| get(tag).map(|f| clean(f.display_value().to_string()));
+    let get_str = |tag| get_any(tag).map(|f| clean(f.display_value().to_string()));
     let mut d = ExifData::default();
 
     d.date_taken = get_str(exif::Tag::DateTimeOriginal)
@@ -64,11 +67,12 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
     d.make = get_str(exif::Tag::Make);
     d.model = get_str(exif::Tag::Model);
     d.software = get_str(exif::Tag::Software);
-    d.lens_model = get_str(exif::Tag::LensModel);
+    d.lens_model = get_str(exif::Tag::LensModel)
+        .or_else(|| get_str(exif::Tag::LensSpecification));
     d.iso = get_str(exif::Tag::PhotographicSensitivity);
 
     // 曝光时间 → "1/250s" or "2s"
-    if let Some(f) = get(exif::Tag::ExposureTime) {
+    if let Some(f) = get_any(exif::Tag::ExposureTime) {
         if let exif::Value::Rational(ref v) = f.value {
             if let Some(r) = v.first() {
                 let val = rational_to_f64(r);
@@ -82,7 +86,7 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
     }
 
     // f 值
-    if let Some(f) = get(exif::Tag::FNumber) {
+    if let Some(f) = get_any(exif::Tag::FNumber) {
         if let exif::Value::Rational(ref v) = f.value {
             if let Some(r) = v.first() {
                 d.f_number = Some(format!("f/{:.1}", rational_to_f64(r)));
@@ -91,7 +95,7 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
     }
 
     // 焦距
-    if let Some(f) = get(exif::Tag::FocalLength) {
+    if let Some(f) = get_any(exif::Tag::FocalLength) {
         if let exif::Value::Rational(ref v) = f.value {
             if let Some(r) = v.first() {
                 d.focal_length = Some(format!("{:.1} mm", rational_to_f64(r)));
@@ -99,7 +103,7 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
         }
     }
 
-    d.focal_length_35mm = get(exif::Tag::FocalLengthIn35mmFilm)
+    d.focal_length_35mm = get_any(exif::Tag::FocalLengthIn35mmFilm)
         .map(|f| format!("{} mm", f.display_value()));
 
     // 图像尺寸
@@ -110,20 +114,20 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
             _ => None,
         }
     }
-    d.image_width = get(exif::Tag::PixelXDimension).and_then(read_u32);
-    d.image_height = get(exif::Tag::PixelYDimension).and_then(read_u32);
+    d.image_width = get_any(exif::Tag::PixelXDimension).and_then(read_u32);
+    d.image_height = get_any(exif::Tag::PixelYDimension).and_then(read_u32);
 
     // GPS
-    d.gps_lat = get(exif::Tag::GPSLatitude)
-        .and_then(|f| gps_coord(f, get(exif::Tag::GPSLatitudeRef)));
-    d.gps_lon = get(exif::Tag::GPSLongitude)
-        .and_then(|f| gps_coord(f, get(exif::Tag::GPSLongitudeRef)));
+    d.gps_lat = get_any(exif::Tag::GPSLatitude)
+        .and_then(|f| gps_coord(f, get_any(exif::Tag::GPSLatitudeRef)));
+    d.gps_lon = get_any(exif::Tag::GPSLongitude)
+        .and_then(|f| gps_coord(f, get_any(exif::Tag::GPSLongitudeRef)));
 
     // 闪光灯
     d.flash = get_str(exif::Tag::Flash);
 
     // 白平衡
-    d.white_balance = get(exif::Tag::WhiteBalance).map(|f| {
+    d.white_balance = get_any(exif::Tag::WhiteBalance).map(|f| {
         match f.display_value().to_string().trim() {
             "0" => "Auto".into(),
             "1" => "Manual".into(),
@@ -132,7 +136,7 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
     });
 
     // 曝光补偿
-    if let Some(f) = get(exif::Tag::ExposureBiasValue) {
+    if let Some(f) = get_any(exif::Tag::ExposureBiasValue) {
         if let exif::Value::SRational(ref v) = f.value {
             if let Some(r) = v.first() {
                 let val = r.num as f64 / r.denom as f64;

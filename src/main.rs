@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 
 use photo_viewer::{
     models::AppState,
-    handlers, file_ops, hash,
+    handlers, file_ops, hash, exif_edit,
 };
 
 async fn persist_meta_cache_atomic(
@@ -65,6 +65,7 @@ async fn main() {
         preview_cache: Arc::new(RwLock::new(HashMap::new())),
         staged_ops: Arc::new(RwLock::new(Vec::new())),
         meta_cache: Arc::new(RwLock::new(HashMap::new())),
+        exif_overrides: Arc::new(RwLock::new(HashMap::new())),
     };
 
     // 尝试从磁盘加载持久化的 meta_cache（位于照片根目录下 .photo_viewer_meta.json）
@@ -84,6 +85,21 @@ async fn main() {
                 }
             }
             Err(e) => tracing::warn!("Failed to read meta cache file: {}", e),
+        }
+    }
+
+    // 人工编辑后的 EXIF 覆盖值（位于照片根目录下 .photo_viewer_exif_overrides.json）
+    let exif_override_file = state.photos_dir.join(".photo_viewer_exif_overrides.json");
+    {
+        let overrides = exif_edit::load_exif_overrides(&exif_override_file).await;
+        if !overrides.is_empty() {
+            let mut guard = state.exif_overrides.write().await;
+            *guard = overrides;
+            tracing::info!(
+                "Loaded exif overrides from {} ({} entries)",
+                exif_override_file.display(),
+                guard.len()
+            );
         }
     }
 
@@ -141,6 +157,8 @@ async fn main() {
         .route("/api/trash/list", get(file_ops::list_trash))
         .route("/api/hash/*subpath", get(hash::hash_file))
         .route("/api/compare", get(hash::compare_photos))
+        .route("/api/exif/lens/*subpath", get(handlers::lens_model_for_photo))
+        .route("/api/exif/update", post(exif_edit::update_exif))
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&addr)
@@ -150,6 +168,8 @@ async fn main() {
     // 优雅退出时执行最后一次落盘
     let shutdown_meta_cache = state.meta_cache.clone();
     let shutdown_cache_path = cache_file.clone();
+    let shutdown_exif_overrides = state.exif_overrides.clone();
+    let shutdown_exif_overrides_path = exif_override_file.clone();
     let shutdown = async move {
         if let Err(e) = tokio::signal::ctrl_c().await {
             tracing::warn!("Failed to listen for shutdown signal: {}", e);
@@ -164,6 +184,19 @@ async fn main() {
 
         if let Err(e) = persist_meta_cache_atomic(&shutdown_cache_path, &snapshot).await {
             tracing::warn!("Failed to flush meta cache on shutdown: {}", e);
+        }
+
+        let exif_snapshot = {
+            let guard = shutdown_exif_overrides.read().await;
+            guard.clone()
+        };
+        if let Err(e) = exif_edit::persist_exif_overrides_atomic(
+            &shutdown_exif_overrides_path,
+            &exif_snapshot,
+        )
+        .await
+        {
+            tracing::warn!("Failed to flush exif overrides on shutdown: {}", e);
         }
     };
 

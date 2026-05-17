@@ -46,6 +46,8 @@ pub struct AppState {
     pub staged_ops: Arc<RwLock<Vec<StagedOp>>>,
     /// 相对路径 → 缓存的EXIF元数据
     pub meta_cache: Arc<RwLock<HashMap<String, CachedMeta>>>,
+    /// 相对路径 → 人工编辑后的 EXIF 覆盖值
+    pub exif_overrides: Arc<RwLock<HashMap<String, ExifData>>>,
 }
 
 /// 文件操作类型

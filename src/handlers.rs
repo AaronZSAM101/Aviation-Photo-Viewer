@@ -9,6 +9,7 @@ use tokio::fs;
 
 use crate::models::{AppState, PhotoMeta, PhotosQuery, CachedMeta};
 use crate::exif::extract_exif;
+use crate::exif_edit::apply_exif_override;
 use crate::utils::safe_subpath;
 
 /// 把整个 static/ 目录嵌入二进制（编译期）
@@ -48,6 +49,55 @@ pub async fn serve_static(Path(path): Path<String>) -> Response {
                 .into_response()
         }
         None => (StatusCode::NOT_FOUND, "Not found").into_response(),
+    }
+}
+
+/// 按需读取镜头信息，作为 `list_photos` 的兜底补充
+pub async fn lens_model_for_photo(
+    Path(subpath): Path<String>,
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if !safe_subpath(&subpath) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let path = state.photos_dir.join(&subpath);
+    if !path.exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let lens = tokio::task::spawn_blocking(move || {
+            use std::process::Command;
+
+            let output = Command::new("mdls")
+                .arg("-name")
+                .arg("kMDItemLensModel")
+                .arg("-raw")
+                .arg(&path)
+                .output()
+                .ok()?;
+            if !output.status.success() {
+                return None;
+            }
+            let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if value.is_empty() || value == "(null)" {
+                None
+            } else {
+                Some(value)
+            }
+        })
+        .await
+        .ok()
+        .flatten();
+
+        return Ok(Json(serde_json::json!({"lens_model": lens})));
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(Json(serde_json::json!({"lens_model": null})))
     }
 }
 
@@ -113,6 +163,11 @@ pub async fn list_photos(
     .unwrap_or_default();
 
     let total = entries.len();
+
+    let exif_overrides = {
+        let guard = state.exif_overrides.read().await;
+        guard.clone()
+    };
 
     // 步骤2：分离缓存命中和需要提取的条目
     // 缓存key = subpath; 当 (mtime, size) 改变时失效
@@ -185,10 +240,15 @@ pub async fn list_photos(
         // 返回 sort_key=0 作为占位。前端的 timeGroupOf 用 `if (!k)` 判断后
         // 会归到「未知日期」组；之前曾误用 `e.mtime`（Unix 时间戳，10 位），
         // 让前端按 14 位 YYYYMMDDHHMMSS 解析后显示成 "0000 年 17 月"。
-        let (exif, sort_key) = match cached.remove(&i) {
+        let (exif, _cached_sort_key) = match cached.remove(&i) {
             Some((exif, sk)) => (exif, sk),
             None => (crate::models::ExifData::default(), 0i64),
         };
+        let mut exif = exif;
+        if let Some(override_exif) = exif_overrides.get(&e.subpath) {
+            apply_exif_override(&mut exif, override_exif);
+        }
+        let sort_key = crate::exif::date_to_sort_key(exif.date_taken.as_deref());
         PhotoMeta {
             filename: e.filename,
             folder: e.folder,
