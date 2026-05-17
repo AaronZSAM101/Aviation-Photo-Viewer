@@ -14,9 +14,11 @@ import {
 import {
   closeViewer, navigate, applyEqualize, disableEqualize,
   fitGridToImage, refreshHistograms, syncToggleButtons,
-  viewerToggleDelete, currentViewerSubpath,
+  refreshCurrentViewer,
+  viewerToggleDelete, currentViewerSubpath, openViewer,
 } from './viewer.js';
 import { openFileOpDialog, commitFileOp, openBulkMoveDialog, commitBulkMove } from './file-ops.js';
+import { openExifEditDialog, commitExifEdit } from './exif-edit.js';
 import { syncSelectionUI } from './selection.js';
 
 function openShortcutsModal() {
@@ -67,6 +69,7 @@ export function bindAllEvents() {
     syncToggleButtons();
     requestAnimationFrame(fitGridToImage);
   });
+  dom.vExifEditBtn.addEventListener('click', openExifEditDialog);
 
   dom.vClose.addEventListener('click', closeViewer);
   dom.vPrev.addEventListener('click', () => navigate(-1));
@@ -163,6 +166,18 @@ export function bindAllEvents() {
   $('btn-apply-staged').addEventListener('click', applyStaged);
   // 文件操作 modal 内的「确定」
   $('btn-commit-file-op').addEventListener('click', commitFileOp);
+  $('btn-commit-exif').addEventListener('click', async () => {
+    const sp = currentViewerSubpath();
+    if (!sp) return;
+    try {
+      await commitExifEdit();
+      await loadPhotos();
+      refreshCurrentViewer(sp);
+      closeModal('modal-exif');
+    } catch (e) {
+      alert('保存 EXIF 失败: ' + e.message);
+    }
+  });
   // 批量移动 modal 内的「确定」
   $('btn-commit-bulk-move').addEventListener('click', commitBulkMove);
 

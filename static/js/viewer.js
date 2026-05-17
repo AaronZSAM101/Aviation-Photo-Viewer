@@ -65,6 +65,24 @@ function showCurrent() {
 
   renderInfoPanel(p);
   updateViewerStagedIndicator();
+  if (!p.exif.lens_model) refreshLensModel(p);
+}
+
+async function refreshLensModel(p) {
+  const sp = subpath(p);
+  try {
+    const res = await fetch('/api/exif/lens/' + encodeURIComponent(sp).replace(/%2F/g, '/'));
+    if (!res.ok) return;
+    const data = await res.json();
+    const lens = data?.lens_model;
+    if (!lens) return;
+    const currentSp = currentViewerSubpath();
+    if (currentSp !== sp) return;
+    p.exif.lens_model = lens;
+    renderInfoPanel(p);
+  } catch {
+    // 兜底失败时不打断主流程
+  }
 }
 
 // 预取左右两张到浏览器缓存，让导航看起来"瞬时"
@@ -88,6 +106,16 @@ export function updateViewerStagedIndicator() {
   dom.vDeleteBtn.classList.toggle('staged', isStaged);
   dom.vDeleteBtn.textContent = isStaged ? '↩ 取消删除' : '🗑 删除';
   dom.vStagedPill.classList.toggle('show', isStaged);
+}
+
+export function refreshCurrentViewer(targetSubpath = null) {
+  if (!dom.viewer.classList.contains('show')) return;
+  const sp = targetSubpath || currentViewerSubpath();
+  if (!sp) return;
+  const idx = state.filteredPhotos.findIndex(p => subpath(p) === sp);
+  if (idx < 0) return;
+  state.viewerIndex = idx;
+  showCurrent();
 }
 
 export async function viewerToggleDelete() {

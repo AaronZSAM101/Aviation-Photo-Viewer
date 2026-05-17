@@ -31,6 +31,7 @@ export const dom = {
   vRgbBtn:       $('v-rgbbtn'),
   vHistBtn:      $('v-histbtn'),
   vInfoBtn:      $('v-info-btn'),
+  vExifEditBtn:  $('v-exif-edit-btn'),
   vPrev:         $('v-prev'),
   vNext:         $('v-next'),
   vDeleteBtn:    $('v-delete-btn'),
