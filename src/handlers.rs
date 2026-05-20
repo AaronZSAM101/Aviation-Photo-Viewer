@@ -130,6 +130,12 @@ pub async fn list_photos(
             .into_iter()
             .filter_map(|e| e.ok())
             .filter(|e| {
+                // 跳过相对于 photos_root 路径中任一以 '@' 开头的组件
+                if let Ok(rel) = e.path().strip_prefix(&photos_root) {
+                    if rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('@')) {
+                        return false;
+                    }
+                }
                 e.file_type().is_file() && {
                     let ext = e.path()
                         .extension()
