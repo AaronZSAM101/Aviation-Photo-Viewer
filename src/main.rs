@@ -44,9 +44,13 @@ async fn main() {
         )
         .init();
 
-    let photos_dir = PathBuf::from(
-        std::env::var("PHOTOS_DIR").unwrap_or_else(|_| "/photos".to_string()),
-    );
+    let photos_dir = if let Ok(p) = std::env::var("PHOTOS_DIR") {
+        PathBuf::from(p)
+    } else if let Some(p) = option_env!("DEFAULT_PHOTOS_DIR") {
+        PathBuf::from(p)
+    } else {
+        PathBuf::from("/photos")
+    };
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     let addr = format!("0.0.0.0:{}", port);
 
@@ -60,7 +64,7 @@ async fn main() {
     tracing::info!("    Listening on http://{}", addr);
 
     let state = AppState {
-        photos_dir: Arc::new(photos_dir.clone()),
+        photos_dir: Arc::new(RwLock::new(photos_dir.clone())),
         thumb_cache: Arc::new(RwLock::new(HashMap::new())),
         preview_cache: Arc::new(RwLock::new(HashMap::new())),
         staged_ops: Arc::new(RwLock::new(Vec::new())),
@@ -69,7 +73,10 @@ async fn main() {
     };
 
     // 尝试从磁盘加载持久化的 meta_cache（位于照片根目录下 .photo_viewer_meta.json）
-    let cache_file = state.photos_dir.join(".photo_viewer_meta.json");
+    let cache_file = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(".photo_viewer_meta.json")
+    };
     if cache_file.exists() {
         match tokio::fs::read_to_string(&cache_file).await {
             Ok(s) => {
@@ -89,7 +96,10 @@ async fn main() {
     }
 
     // 人工编辑后的 EXIF 覆盖值（位于照片根目录下 .photo_viewer_exif_overrides.json）
-    let exif_override_file = state.photos_dir.join(".photo_viewer_exif_overrides.json");
+    let exif_override_file = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(".photo_viewer_exif_overrides.json")
+    };
     {
         let overrides = exif_edit::load_exif_overrides(&exif_override_file).await;
         if !overrides.is_empty() {
@@ -159,6 +169,8 @@ async fn main() {
         .route("/api/compare", get(hash::compare_photos))
         .route("/api/exif/lens/*subpath", get(handlers::lens_model_for_photo))
         .route("/api/exif/update", post(exif_edit::update_exif))
+        .route("/api/admin/allow_set_dir", get(handlers::allow_runtime_dir_change))
+        .route("/api/admin/set_photos_dir", post(handlers::set_photos_dir))
         .with_state(state.clone());
 
     let listener = tokio::net::TcpListener::bind(&addr)

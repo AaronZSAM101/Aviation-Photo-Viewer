@@ -1,0 +1,25 @@
+{
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "devPath": "../static",
+    "distDir": "../static"
+  },
+  "package": {
+    "productName": "Photo Viewer",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "bundle": {
+      "active": true,
+      "identifier": "com.example.photo_viewer"
+    },
+    "windows": [
+      {
+        "title": "Photo Viewer",
+        "width": 1200,
+        "height": 800
+      }
+    ]
+  }
+}

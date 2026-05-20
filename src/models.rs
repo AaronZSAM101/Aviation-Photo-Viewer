@@ -37,7 +37,7 @@ pub struct CachedMeta {
 /// 应用状态
 #[derive(Clone)]
 pub struct AppState {
-    pub photos_dir: Arc<PathBuf>,
+    pub photos_dir: Arc<RwLock<PathBuf>>,
     /// 相对路径 → (mtime, size, JPEG 缩略图字节)
     pub thumb_cache: Arc<RwLock<HashMap<String, (u64, u64, Vec<u8>)>>>,
     /// 相对路径 → (mtime, size, 预览字节, mime类型)

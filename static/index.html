@@ -53,6 +53,7 @@
     <button id="btn-stage-list">📄 分批列表</button>
     <button id="btn-trash">♻️ 回收站</button>
     <button id="btn-shortcuts">⌨ 快捷键</button>
+    <button id="btn-admin-setdir" title="切换照片目录">⚙️ 目录</button>
 
     <span class="stats" id="stats">—</span>
   </div>
@@ -288,6 +289,25 @@
     </div>
     <div class="modal-footer">
       <button data-close-modal="modal-shortcuts">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-setdir" class="modal">
+  <div class="modal-content" style="max-width:520px">
+    <div class="modal-header">
+      <h2 class="modal-title">切换照片目录（仅限管理员）</h2>
+      <button class="modal-close" data-close-modal="modal-setdir">×</button>
+    </div>
+    <div class="modal-body">
+      <p style="color:var(--muted);font-size:13px">注意：该操作仅在服务器启用了运行时目录切换时可用。</p>
+      <label style="font-size:11px;color:var(--muted)">目录路径（绝对路径）</label>
+      <input type="text" id="setdir-path" style="width:100%" placeholder="/path/to/photos" />
+      <div id="setdir-msg" style="margin-top:8px;color:var(--muted)"></div>
+    </div>
+    <div class="modal-footer">
+      <button data-close-modal="modal-setdir">取消</button>
+      <button id="btn-commit-setdir" class="primary">切换目录</button>
     </div>
   </div>
 </div>

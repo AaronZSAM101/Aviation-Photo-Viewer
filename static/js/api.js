@@ -175,3 +175,43 @@ export async function stageRestore(trashName) {
 export function closeModal(id) {
   document.getElementById(id).classList.remove('show');
 }
+
+export async function allowRuntimeDirChange() {
+  try {
+    const res = await fetch('/api/admin/allow_set_dir');
+    if (!res.ok) return false;
+    const j = await res.json();
+    return !!j.allowed;
+  } catch (e) {
+    return false;
+  }
+}
+
+export async function setPhotosDir(path) {
+  const res = await fetch('/api/admin/set_photos_dir', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || 'failed');
+  }
+  return await res.json();
+}
+
+export async function selectPhotosDirWithTauri() {
+  // 优先尝试调用 Tauri 的命令（当在 Tauri 环境中时可用）
+  try {
+    if (window.__TAURI__ && window.__TAURI__.invoke) {
+      const p = await window.__TAURI__.invoke('select_photos_dir');
+      return p || null;
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // 回退：用户输入路径
+  const manual = prompt('选择照片目录（输入绝对路径）');
+  return manual ? manual.trim() : null;
+}

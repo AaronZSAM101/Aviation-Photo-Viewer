@@ -143,7 +143,10 @@ pub async fn apply_stage(
     }
 
     // 确保垃圾桶目录存在
-    let trash_dir = state.photos_dir.join(".trash");
+    let trash_dir = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(".trash")
+    };
     if let Err(e) = fs::create_dir_all(&trash_dir).await {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -156,8 +159,14 @@ pub async fn apply_stage(
         match op.kind {
             OpKind::Move | OpKind::Rename | OpKind::Copy => {
                 if let Some(dst_rel) = &op.dst {
-                    let dst = state.photos_dir.join(dst_rel);
-                    let src = state.photos_dir.join(&op.src);
+                    let dst = {
+                        let pd = state.photos_dir.read().await.clone();
+                        pd.join(dst_rel)
+                    };
+                    let src = {
+                        let pd = state.photos_dir.read().await.clone();
+                        pd.join(&op.src)
+                    };
                     if dst.exists() && dst != src && !op.replace {
                         return Err((
                             StatusCode::CONFLICT,
@@ -173,7 +182,10 @@ pub async fn apply_stage(
     let mut applied = 0usize;
     // 执行操作
     for op in ops.drain(..) {
-        let src = state.photos_dir.join(&op.src);
+        let src = {
+            let pd = state.photos_dir.read().await.clone();
+            pd.join(&op.src)
+        };
         match op.kind {
             OpKind::Delete => {
                 // 移动到垃圾桶（带UUID后缀避免冲突）
@@ -187,7 +199,10 @@ pub async fn apply_stage(
             OpKind::Restore => {
                 // src 是垃圾文件名, dst 是原始路径（可选）
                 if let Some(dst_rel) = op.dst {
-                    let dst = state.photos_dir.join(&dst_rel);
+                    let dst = {
+                        let pd = state.photos_dir.read().await.clone();
+                        pd.join(&dst_rel)
+                    };
                     if let Some(p) = dst.parent() {
                         let _ = fs::create_dir_all(p).await;
                     }
@@ -200,7 +215,10 @@ pub async fn apply_stage(
                         if let Some(s) = name.to_str() {
                             if s.len() > 37 && s.chars().nth(s.len() - 37) == Some('-') {
                                 let orig_name = &s[..s.len() - 37];
-                                let restored = state.photos_dir.join(orig_name.replace('_', "/"));
+                                let restored = {
+                                    let pd = state.photos_dir.read().await.clone();
+                                    pd.join(orig_name.replace('_', "/"))
+                                };
                                 if let Some(p) = restored.parent() {
                                     let _ = fs::create_dir_all(p).await;
                                 }
@@ -213,7 +231,10 @@ pub async fn apply_stage(
             }
             OpKind::Move | OpKind::Rename => {
                 if let Some(dst_rel) = op.dst {
-                    let dst = state.photos_dir.join(&dst_rel);
+                    let dst = {
+                        let pd = state.photos_dir.read().await.clone();
+                        pd.join(&dst_rel)
+                    };
                     if op.replace && dst.exists() && dst != src {
                         let _ = fs::remove_file(&dst).await;
                     }
@@ -226,7 +247,10 @@ pub async fn apply_stage(
             }
             OpKind::Copy => {
                 if let Some(dst_rel) = op.dst {
-                    let dst = state.photos_dir.join(&dst_rel);
+                    let dst = {
+                        let pd = state.photos_dir.read().await.clone();
+                        pd.join(&dst_rel)
+                    };
                     if op.replace && dst.exists() && dst != src {
                         let _ = fs::remove_file(&dst).await;
                     }
@@ -247,7 +271,10 @@ pub async fn apply_stage(
 pub async fn list_trash(
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Json<Vec<serde_json::Value>> {
-    let trash_dir = state.photos_dir.join(".trash");
+    let trash_dir = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(".trash")
+    };
     let mut items = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&trash_dir) {
         for entry in entries.flatten() {

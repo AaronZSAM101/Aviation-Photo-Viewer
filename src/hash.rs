@@ -18,7 +18,10 @@ pub async fn hash_file(
     if !safe_subpath(&subpath) {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let path = state.photos_dir.join(&subpath);
+    let path = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(&subpath)
+    };
     let data = tokio::fs::read(&path)
         .await
         .map_err(|_| StatusCode::NOT_FOUND)?;
@@ -55,8 +58,14 @@ pub async fn compare_photos(
     if !safe_subpath(a) || !safe_subpath(b) {
         return Err((StatusCode::BAD_REQUEST, "invalid path".into()));
     }
-    let pa = state.photos_dir.join(a);
-    let pb = state.photos_dir.join(b);
+    let pa = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(a)
+    };
+    let pb = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(b)
+    };
     let da = tokio::fs::read(&pa)
         .await
         .map_err(|_| (StatusCode::NOT_FOUND, "a not found".into()))?;

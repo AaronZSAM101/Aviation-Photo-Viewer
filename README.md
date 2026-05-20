@@ -23,6 +23,7 @@
 
 ## 快速开始
 建议本地用户使用 [Podman](https://podman.io/) 进行部署。
+PHOTOS_DIR=/Users/aaronliu/Library/CloudStorage/SynologyDrive-MBA-Aaron/Photos/Aviation PORT=3002 ./target/release/photo-viewer
 ```bash
 # 1. 构建镜像
 podman build -t photo-viewer .

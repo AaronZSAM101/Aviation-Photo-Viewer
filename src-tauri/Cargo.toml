@@ -1,0 +1,13 @@
+[package]
+name = "photo_viewer_tauri"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# lightweight tauri dependency; actual features resolved by cargo
+tauri = { version = "2", features = ["api-shell"] }
+
+[build-dependencies]
+
+[profile.release]
+opt-level = 3

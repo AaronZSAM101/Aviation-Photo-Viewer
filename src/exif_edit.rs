@@ -104,12 +104,18 @@ pub async fn update_exif(
         return Err((StatusCode::BAD_REQUEST, "invalid src".to_string()));
     }
 
-    let path = state.photos_dir.join(&req.src);
+    let path = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(&req.src)
+    };
     if !path.exists() {
         return Err((StatusCode::NOT_FOUND, "source file not found".to_string()));
     }
 
-    let cache_path = state.photos_dir.join(".photo_viewer_exif_overrides.json");
+    let cache_path = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(".photo_viewer_exif_overrides.json")
+    };
 
     {
         let mut overrides = state.exif_overrides.write().await;

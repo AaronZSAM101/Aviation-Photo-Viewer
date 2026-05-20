@@ -61,7 +61,10 @@ pub async fn lens_model_for_photo(
         return Err(StatusCode::BAD_REQUEST);
     }
 
-    let path = state.photos_dir.join(&subpath);
+    let path = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(&subpath)
+    };
     if !path.exists() {
         return Err(StatusCode::NOT_FOUND);
     }
@@ -118,10 +121,11 @@ pub async fn list_photos(
     let started = std::time::Instant::now();
 
     // 步骤1：在blocking池中遍历文件系统，避免阻塞tokio
-    let photos_dir = state.photos_dir.clone();
+    let photos_dir = state.photos_dir.read().await.clone();
+    let photos_root = photos_dir.clone();
     let entries: Vec<WalkEntry> = tokio::task::spawn_blocking(move || {
         use walkdir::WalkDir;
-        WalkDir::new(photos_dir.as_ref())
+        WalkDir::new(photos_dir)
             .max_depth(4)
             .into_iter()
             .filter_map(|e| e.ok())
@@ -145,8 +149,8 @@ pub async fn list_photos(
                 let filename = path.file_name()
                     .and_then(|s| s.to_str())?
                     .to_string();
-                let folder = path.parent()
-                    .and_then(|p| p.strip_prefix(photos_dir.as_ref()).ok())
+                    let folder = path.parent()
+                    .and_then(|p| p.strip_prefix(&photos_root).ok())
                     .and_then(|p| p.to_str())
                     .unwrap_or("")
                     .to_string();
@@ -283,7 +287,10 @@ pub async fn serve_photo(
     if !safe_subpath(&subpath) {
         return Err(axum::http::StatusCode::BAD_REQUEST);
     }
-    let path = state.photos_dir.join(&subpath);
+    let path = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(&subpath)
+    };
     let data = fs::read(&path)
         .await
         .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
@@ -303,7 +310,10 @@ pub async fn serve_thumb(
     }
 
     let cache_key = subpath.clone();
-    let path = state.photos_dir.join(&subpath);
+    let path = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(&subpath)
+    };
     let metadata = fs::metadata(&path)
         .await
         .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
@@ -359,7 +369,10 @@ pub async fn serve_preview(
     }
 
     let cache_key = subpath.clone();
-    let path = state.photos_dir.join(&subpath);
+    let path = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(&subpath)
+    };
     let metadata = fs::metadata(&path)
         .await
         .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
@@ -413,4 +426,50 @@ pub async fn serve_preview(
         .insert(cache_key, (mtime, size, result.0.clone(), result.1.clone()));
 
     Ok(([(header::CONTENT_TYPE, result.1)], result.0))
+}
+
+/// 管理接口：检查是否允许运行时切换照片目录（由环境变量控制）
+pub async fn allow_runtime_dir_change() -> Json<serde_json::Value> {
+    let allowed = std::env::var("ALLOW_RUNTIME_DIR_CHANGE").unwrap_or_else(|_| "false".into()) == "true";
+    Json(serde_json::json!({"allowed": allowed}))
+}
+
+/// 管理接口：切换照片目录（仅在 ALLOW_RUNTIME_DIR_CHANGE=true 时允许）
+pub async fn set_photos_dir(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if std::env::var("ALLOW_RUNTIME_DIR_CHANGE").unwrap_or_else(|_| "false".into()) != "true" {
+        return Err((StatusCode::FORBIDDEN, "runtime dir change disabled".to_string()));
+    }
+
+    let path = match body.get("path").and_then(|v| v.as_str()) {
+        Some(p) => p,
+        None => return Err((StatusCode::BAD_REQUEST, "missing path".into())),
+    };
+
+    let p = PathBuf::from(path);
+    match fs::metadata(&p).await {
+        Ok(m) if m.is_dir() => (),
+        _ => return Err((StatusCode::BAD_REQUEST, "path not a directory".into())),
+    }
+
+    // 更新状态并清空相关缓存
+    {
+        let mut guard = state.photos_dir.write().await;
+        *guard = p.clone();
+    }
+    state.meta_cache.write().await.clear();
+    state.thumb_cache.write().await.clear();
+    state.preview_cache.write().await.clear();
+
+    // 加载新的 exif_overrides（如果存在）
+    let overrides_path = p.join(".photo_viewer_exif_overrides.json");
+    let overrides = crate::exif_edit::load_exif_overrides(&overrides_path).await;
+    {
+        let mut g = state.exif_overrides.write().await;
+        *g = overrides;
+    }
+
+    Ok(Json(serde_json::json!({"ok": true, "path": path})))
 }
