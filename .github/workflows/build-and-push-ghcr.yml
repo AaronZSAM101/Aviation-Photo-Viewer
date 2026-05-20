@@ -1,4 +1,4 @@
-name: Build and Push Container Image
+name: Build and Push Multi-Arch Image (Native Speed)
 
 on:
   push:
@@ -13,18 +13,23 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-linux:
-    name: Build Linux images (amd64/arm64)
-    runs-on: ubuntu-latest
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
+    
+    strategy:
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04  # 标准的 x86 运行器
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm  # 原生的 ARM64 运行器 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -37,23 +42,24 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
-        id: meta_linux
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          flavor: |
-            latest=false
+          flavor: latest=false
           tags: |
-            type=ref,event=branch,suffix=-linux-amd64-arm64
-            type=ref,event=tag,suffix=-linux-amd64-arm64
-            type=sha,suffix=-linux-amd64-arm64
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha
 
-      - name: Build and push Linux multi-arch image
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Containerfile
           push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta_linux.outputs.tags }}
-          labels: ${{ steps.meta_linux.outputs.labels }}
+          platforms: ${{ matrix.platform }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
