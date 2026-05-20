@@ -24,8 +24,10 @@ jobs:
       matrix:
         include:
           - platform: linux/amd64
+            arch: amd64
             runner: ubuntu-24.04  # 标准的 x86 运行器
           - platform: linux/arm64
+            arch: arm64
             runner: ubuntu-24.04-arm  # 原生的 ARM64 运行器 
     steps:
       - name: Checkout
@@ -48,9 +50,9 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           flavor: latest=false
           tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha
+            type=ref,event=branch,suffix=-${{ matrix.arch }}
+            type=ref,event=tag,suffix=-${{ matrix.arch }}
+            type=sha,format=short,prefix=sha-,suffix=-${{ matrix.arch }}
 
       - name: Build and push
         uses: docker/build-push-action@v6
