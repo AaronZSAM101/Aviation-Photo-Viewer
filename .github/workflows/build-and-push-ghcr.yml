@@ -98,3 +98,4 @@ jobs:
           push: true
           platforms: windows/amd64
           tags: ${{ steps.meta_windows.outputs.tags }}
+          labels: ${{ steps.meta_windows.outputs.labels }}
