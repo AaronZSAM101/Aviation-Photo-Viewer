@@ -37,14 +37,16 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
-        id: meta
+        id: meta_linux
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
           tags: |
-            type=ref,event=branch
-            type=ref,event=tag
-            type=sha
+            type=ref,event=branch,suffix=-linux-amd64-arm64
+            type=ref,event=tag,suffix=-linux-amd64-arm64
+            type=sha,suffix=-linux-amd64-arm64
 
       - name: Build and push Linux multi-arch image
         uses: docker/build-push-action@v6
@@ -53,18 +55,11 @@ jobs:
           file: ./Containerfile
           push: true
           platforms: linux/amd64,linux/arm64
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:linux-amd64-arm64
-          labels: ${{ steps.meta.outputs.labels }}
-
-      - name: Tag arm64 image for Apple Silicon hosts
-        run: |
-          docker buildx imagetools create \
-            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:macos-arm64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:linux-amd64-arm64
+          tags: ${{ steps.meta_linux.outputs.tags }}
+          labels: ${{ steps.meta_linux.outputs.labels }}
 
   build-windows:
-    name: Build Windows images (amd64/arm64)
+    name: Build Windows image (amd64)
     runs-on: windows-2022
     permissions:
       contents: read
@@ -83,36 +78,23 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Windows multi-arch image
+      - name: Extract Docker metadata
+        id: meta_windows
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=branch,suffix=-windows-amd64
+            type=ref,event=tag,suffix=-windows-amd64
+            type=sha,suffix=-windows-amd64
+
+      - name: Build and push Windows image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Containerfile.windows
           push: true
-          platforms: windows/amd64,windows/arm64
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:windows-amd64-arm64
-
-  publish-manifest:
-    name: Publish manifest list
-    runs-on: ubuntu-latest
-    needs:
-      - build-linux
-      - build-windows
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Create unified tag
-        run: |
-          docker buildx imagetools create \
-            --tag ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:linux-amd64-arm64 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:windows-amd64-arm64
+          platforms: windows/amd64
+          tags: ${{ steps.meta_windows.outputs.tags }}
