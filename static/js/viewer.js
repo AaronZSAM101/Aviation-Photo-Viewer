@@ -195,16 +195,13 @@ function renderInfoPanel(p) {
 
 function syncChartHost() {
   if (!dom.vCharts || !dom.vInfo || !dom.vStage) return;
-  const isDesktop = window.matchMedia('(min-width: 901px)').matches;
-  const mobileLandscape = window.matchMedia('(max-width: 900px) and (orientation: landscape)').matches;
-  const mobilePortrait = window.matchMedia('(max-width: 900px) and (orientation: portrait)').matches;
-  // If EXIF panel is open, prefer hosting charts inside it on desktop, landscape or mobile portrait
-  const useInfoHost = state.infoOn && (isDesktop || mobileLandscape || mobilePortrait);
-  const host = useInfoHost ? dom.vInfo : dom.vStage;
+  // charts 永远托管在 vinfo 里（不管 EXIF 是否打开），避免浮在 vstage 上挡照片。
+  // vinfo 容器本身的可见性由 syncToggleButtons 控制（infoOn || chartCount>0）。
+  const host = dom.vInfo;
   if (dom.vCharts.parentElement !== host) {
     host.prepend(dom.vCharts);
   }
-  dom.vCharts.classList.toggle('in-info', useInfoHost);
+  dom.vCharts.classList.add('in-info');
 }
 
 // ── 污点检查：每通道直方图均衡（JetPhotos 风格）─────────────────────────
@@ -348,10 +345,16 @@ export function syncToggleButtons() {
   dom.vFineGrid.classList.toggle('show',      state.fineGridOn);
   dom.vRgbPanel.classList.toggle('show',      state.rgbOn);
   dom.vHistPanel.classList.toggle('show',     state.histOn);
-  dom.vInfo.classList.toggle('show',          state.infoOn);
-  syncChartHost();
-  dom.vStage.classList.toggle('info-open',    state.infoOn);
   const chartCount = (state.rgbOn ? 1 : 0) + (state.histOn ? 1 : 0);
+  // vinfo 容器可见：EXIF 开 或 任一 chart 开（charts 留在 vinfo 里，不浮回照片上）
+  dom.vInfo.classList.toggle('show', state.infoOn || chartCount > 0);
+  // exif-on：EXIF 文本区是否显示（独立于容器可见性）
+  dom.vInfo.classList.toggle('exif-on', state.infoOn);
+  syncChartHost();
+  // vstage padding：info-open 现在等价于"vinfo 容器可见"；
+  // exif-on-stage 单独标记 EXIF 文本是否显示，让 CSS 在仅 charts 时缩小 vstage padding
+  dom.vStage.classList.toggle('info-open',    state.infoOn || chartCount > 0);
+  dom.vStage.classList.toggle('exif-on-stage', state.infoOn);
   dom.vStage.classList.toggle('chart-open-one', chartCount === 1);
   dom.vStage.classList.toggle('chart-open-two', chartCount === 2);
   // mark vInfo when charts are visible so layout can adapt (EXIF full width when none)

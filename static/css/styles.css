@@ -335,6 +335,10 @@ input[type="text"]:focus,input[type="search"]:focus{outline:none;border-color:va
   width:100%;
   height:90px;
 }
+/* charts 全关时 v-charts 容器隐藏 */
+#vinfo:not(.charts-open) > #v-charts.in-info{display:none}
+/* EXIF 关时文本区隐藏 — 让 vinfo 仅承载 charts，charts 不再浮到照片上 */
+#vinfo:not(.exif-on) .vinfo-sections{display:none}
 
 .nav-arrow{position:absolute;top:50%;transform:translateY(-50%);width:40px;height:60px;background:rgba(0,0,0,.4);border:none;color:#fff;font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s,background .15s;z-index:3;border-radius:4px}
 #vstage:hover .nav-arrow{opacity:1}
@@ -662,8 +666,7 @@ input[type="text"]:focus,input[type="search"]:focus{outline:none;border-color:va
     align-items:stretch;
   }
 
-  /* 仅 EXIF：单列铺满，隐藏 charts 占位 */
-  #vinfo:not(.charts-open) > #v-charts.in-info{display:none}
+  /* 仅 EXIF（charts 全关）：vinfo-sections 铺满（charts 占位的隐藏由基础规则负责） */
   #vinfo:not(.charts-open) .vinfo-sections{width:100%}
 
   /* charts 任一开启：两列布局，整体抬高到 ~50vh 以放下两张图 */
@@ -766,6 +769,23 @@ input[type="text"]:focus,input[type="search"]:focus{outline:none;border-color:va
   /* 让图片在底部抬出空间，避免与 charts-open 后的更高 EXIF 框重叠 */
   #vstage.info-open.chart-open-one,
   #vstage.info-open.chart-open-two{padding-bottom:50vh}
+
+  /* charts-only（EXIF 关）：vinfo 改回 column，charts 撑满 vinfo 宽度，
+     高度由 charts 内容决定，不再左右分栏 */
+  #vinfo.charts-open:not(.exif-on){
+    flex-direction:column;
+    max-height:none;
+    gap:6px;
+  }
+  #vinfo.charts-open:not(.exif-on) > #v-charts.in-info{
+    flex:1 1 auto;
+    width:100%;
+    max-width:none;
+    min-width:0;
+  }
+  /* 仅 charts 时 vstage 抬出的空间也对应缩小 */
+  #vstage.info-open.chart-open-one:not(.exif-on-stage),
+  #vstage.info-open.chart-open-two:not(.exif-on-stage){padding-bottom:30vh}
 }
 
 @media (max-width: 560px){
@@ -812,17 +832,31 @@ input[type="text"]:focus,input[type="search"]:focus{outline:none;border-color:va
     background:var(--surface);
     padding:8px 10px;
   }
-  /* display/flex 只在 .show 上加，避免覆盖基础规则里的 display:none，让 I 键可以隐藏 EXIF */
+  /* 横屏 vinfo：列布局 — charts 在上、EXIF 在下，跟桌面一致。
+     display 只在 .show 上加，保留 I 键的隐藏/显示切换。 */
   #vinfo.show{
     display:flex;
-    flex-direction:row;
-    gap:10px;
-    align-items:flex-start;
+    flex-direction:column;
+    gap:8px;
+    align-items:stretch;
   }
-  #vinfo .vinfo-sections{flex:1;min-width:0;overflow:auto}
-  #vinfo > #v-charts.in-info{position:relative;top:auto;display:flex;flex-direction:column;width:280px;min-width:200px;margin:0}
+  /* charts 容器：占满 vinfo 宽度堆在顶部，关闭时由全局 :not(.charts-open) 规则隐藏 */
+  #vinfo > #v-charts.in-info{
+    position:relative;
+    top:auto;
+    width:100%;
+    min-width:0;
+    margin:0;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    padding-bottom:0;
+  }
   #vinfo > #v-charts.in-info .chart-panel.show{
-    height:86px;
+    width:100%;
+    height:80px;
   }
+  /* EXIF 列：占满 vinfo 宽度、纵向填满剩余高度并独立滚动 */
+  #vinfo .vinfo-sections{flex:1 1 0;min-height:0;min-width:0;overflow-y:auto;width:100%}
   #vstage.info-open{padding-bottom:0}
 }
