@@ -35,6 +35,11 @@ function currentExifValue(exif, field) {
 }
 
 export function openExifEditDialog() {
+  if (state.readOnly) {
+    alert('当前为只读模式，管理操作已禁用');
+    return;
+  }
+
   const photo = currentPhoto();
   if (!photo) return;
 
@@ -114,6 +119,10 @@ function buildPayload() {
 }
 
 export async function commitExifEdit() {
+  if (state.readOnly) {
+    throw new Error('当前为只读模式');
+  }
+
   const payload = buildPayload();
   const res = await fetch('/api/exif/update', {
     method: 'POST',

@@ -1,8 +1,4 @@
-use axum::{
-    extract::Path,
-    http::StatusCode,
-    Json,
-};
+use axum::{extract::Path, http::StatusCode, Json};
 use serde_json::json;
 use tokio::fs;
 use uuid::Uuid;
@@ -15,6 +11,13 @@ pub async fn stage_op(
     axum::extract::State(state): axum::extract::State<AppState>,
     body: axum::body::Bytes,
 ) -> (StatusCode, Json<serde_json::Value>) {
+    if state.read_only {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error":"read-only mode enabled"})),
+        );
+    }
+
     let req: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(v) => v,
         Err(_) => {
@@ -30,7 +33,10 @@ pub async fn stage_op(
         .get("dst")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let replace = req.get("replace").and_then(|v| v.as_bool()).unwrap_or(false);
+    let replace = req
+        .get("replace")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     if src.is_empty() || !safe_subpath(src) {
         return (
@@ -129,6 +135,10 @@ pub async fn list_stage(
 pub async fn clear_stage(
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> StatusCode {
+    if state.read_only {
+        return StatusCode::FORBIDDEN;
+    }
+
     state.staged_ops.write().await.clear();
     StatusCode::NO_CONTENT
 }
@@ -137,6 +147,10 @@ pub async fn clear_stage(
 pub async fn apply_stage(
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    if state.read_only {
+        return Err((StatusCode::FORBIDDEN, "read-only mode enabled".to_string()));
+    }
+
     let mut ops = state.staged_ops.write().await;
     if ops.is_empty() {
         return Ok((StatusCode::OK, Json(json!({"applied":0}))));
@@ -189,7 +203,8 @@ pub async fn apply_stage(
         match op.kind {
             OpKind::Delete => {
                 // 移动到垃圾桶（带UUID后缀避免冲突）
-                let target = trash_dir.join(format!("{}-{}", op.src.replace('/', "_"), Uuid::new_v4()));
+                let target =
+                    trash_dir.join(format!("{}-{}", op.src.replace('/', "_"), Uuid::new_v4()));
                 if let Some(p) = target.parent() {
                     let _ = fs::create_dir_all(p).await;
                 }
@@ -291,6 +306,10 @@ pub async fn remove_staged(
     Path(op_id): Path<String>,
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> StatusCode {
+    if state.read_only {
+        return StatusCode::FORBIDDEN;
+    }
+
     let mut ops = state.staged_ops.write().await;
     ops.retain(|op| op.id != op_id);
     StatusCode::NO_CONTENT

@@ -47,6 +47,64 @@ podman run --rm \
 |---------------|------------|---------------------|
 | `PHOTOS_DIR`  | `/photos`  | 容器内照片目录路径  |
 | `PORT`        | `3000`     | 监听端口            |
+| `HOST`        | `127.0.0.1` | 监听地址；容器镜像默认设为 `0.0.0.0` |
+| `READ_ONLY`   | `false`    | 只读模式；设为 `true` 时禁用所有写操作 |
+
+> 公网部署时不要直接暴露 photo-viewer 端口。建议让 photo-viewer 只在容器网络内监听，再通过认证反向代理访问。
+
+---
+
+## 公网安全部署
+
+本项目没有内置账号系统。若端口直接暴露到公网，知道链接的人可以查看照片，并在非只读模式下执行移动、删除、重命名、EXIF 编辑等操作。
+
+推荐使用 **GitHub OAuth + oauth2-proxy + Caddy** 作为公网入口：
+
+```text
+Internet
+  -> Caddy :443
+  -> oauth2-proxy :4180
+  -> photo-viewer :3000
+```
+
+GitHub OAuth App 配置：
+
+| 字段 | 示例 |
+|------|------|
+| Homepage URL | `https://photos.example.com` |
+| Authorization callback URL | `https://photos.example.com/oauth2/callback` |
+
+oauth2-proxy 关键配置示例：
+
+```text
+provider = "github"
+client_id = "<GitHub OAuth Client ID>"
+client_secret = "<GitHub OAuth Client Secret>"
+cookie_secret = "<openssl rand -base64 32>"
+email_domains = ["*"]
+github_users = ["your-github-user", "friend-github-user"]
+upstreams = ["http://photo-viewer:3000"]
+http_address = "0.0.0.0:4180"
+reverse_proxy = true
+cookie_secure = true
+```
+
+Caddyfile 示例：
+
+```caddyfile
+photos.example.com {
+  reverse_proxy oauth2-proxy:4180
+}
+```
+
+photo-viewer 公网建议环境变量：
+
+```bash
+HOST=0.0.0.0
+READ_ONLY=true
+```
+
+`READ_ONLY=true` 会在后端拒绝写接口，并在前端隐藏管理按钮。GitHub OAuth 负责“谁能进入”，只读模式负责“进入后不能改/删照片”。
 
 ---
 

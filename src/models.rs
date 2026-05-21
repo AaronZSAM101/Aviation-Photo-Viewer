@@ -38,6 +38,8 @@ pub struct CachedMeta {
 #[derive(Clone)]
 pub struct AppState {
     pub photos_dir: Arc<RwLock<PathBuf>>,
+    /// 公网分享/反代认证场景下的只读保护开关
+    pub read_only: bool,
     /// 相对路径 → (mtime, size, JPEG 缩略图字节)
     pub thumb_cache: Arc<RwLock<HashMap<String, (u64, u64, Vec<u8>)>>>,
     /// 相对路径 → (mtime, size, 预览字节, mime类型)

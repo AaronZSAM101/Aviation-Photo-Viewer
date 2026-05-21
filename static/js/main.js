@@ -1,6 +1,6 @@
 // 入口模块：绑定所有事件，加载首屏数据
 import { bindAllEvents } from './events.js';
-import { loadPhotos, allowRuntimeDirChange, setPhotosDir, selectPhotosDirWithTauri } from './api.js';
+import { loadConfig, loadPhotos, allowRuntimeDirChange, setPhotosDir, selectPhotosDirWithTauri } from './api.js';
 import { state } from './state.js';
 import { subpath } from './utils.js';
 import { openViewer } from './viewer.js';
@@ -9,6 +9,7 @@ import { initTheme } from './theme.js';
 
 applyRouteStateFromLocation();
 initTheme();
+await loadConfig();
 bindAllEvents();
 
 // 管理界面：目录切换

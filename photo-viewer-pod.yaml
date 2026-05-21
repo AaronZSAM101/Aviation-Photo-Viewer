@@ -15,6 +15,10 @@ spec:
           value: /photos
         - name: PORT
           value: "3000"
+        - name: HOST
+          value: 0.0.0.0
+        - name: READ_ONLY
+          value: "true"
       volumeMounts:
         - name: photos-volume
           mountPath: /photos

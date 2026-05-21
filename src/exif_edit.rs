@@ -2,8 +2,11 @@ use axum::{extract::State, http::StatusCode, Json};
 use serde_json::json;
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::{exif::date_to_sort_key, models::{AppState, ExifData}};
 use crate::utils::safe_subpath;
+use crate::{
+    exif::date_to_sort_key,
+    models::{AppState, ExifData},
+};
 
 #[derive(Debug, serde::Deserialize)]
 pub struct ExifUpdateRequest {
@@ -100,6 +103,10 @@ pub async fn update_exif(
     State(state): State<AppState>,
     Json(req): Json<ExifUpdateRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    if state.read_only {
+        return Err((StatusCode::FORBIDDEN, "read-only mode enabled".to_string()));
+    }
+
     if !safe_subpath(&req.src) {
         return Err((StatusCode::BAD_REQUEST, "invalid src".to_string()));
     }

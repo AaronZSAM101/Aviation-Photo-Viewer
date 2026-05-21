@@ -78,14 +78,17 @@ export function bindAllEvents() {
   dom.vNext.addEventListener('click', () => navigate( 1));
   dom.vDeleteBtn.addEventListener('click', viewerToggleDelete);
   dom.vRenameBtn.addEventListener('click', () => {
+    if (state.readOnly) return;
     const sp = currentViewerSubpath();
     if (sp) openFileOpDialog('rename', sp);
   });
   dom.vMoveBtn.addEventListener('click', () => {
+    if (state.readOnly) return;
     const sp = currentViewerSubpath();
     if (sp) openFileOpDialog('move', sp);
   });
   dom.vCopyBtn.addEventListener('click', () => {
+    if (state.readOnly) return;
     const sp = currentViewerSubpath();
     if (sp) openFileOpDialog('copy', sp);
   });
@@ -212,6 +215,7 @@ export function bindAllEvents() {
   }
 
   function buildCardMenuHTML(isBulk) {
+    if (state.readOnly) return '';
     const items = [
       '<button class="card-context-item danger" data-kind="delete">删除</button>',
       '<div class="card-context-sep"></div>',
@@ -250,6 +254,7 @@ export function bindAllEvents() {
   document.addEventListener('contextmenu', e => {
     const card = e.target.closest('.card');
     if (!card) return;
+    if (state.readOnly) return;
     e.preventDefault();
 
     const idx = parseInt(card.dataset.photosIdx, 10);

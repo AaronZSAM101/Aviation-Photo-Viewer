@@ -1,15 +1,15 @@
 use axum::{
     extract::{Path, Query, State},
-    http::{header, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
     Json,
 };
 use std::{collections::HashMap, path::PathBuf, time::UNIX_EPOCH};
 use tokio::fs;
 
-use crate::models::{AppState, PhotoMeta, PhotosQuery, CachedMeta};
 use crate::exif::extract_exif;
 use crate::exif_edit::apply_exif_override;
+use crate::models::{AppState, CachedMeta, PhotoMeta, PhotosQuery};
 use crate::utils::safe_subpath;
 
 /// 把整个 static/ 目录嵌入二进制（编译期）
@@ -22,6 +22,32 @@ const SUPPORTED_EXTS: &[&str] = &["jpg", "jpeg", "png", "tiff", "tif", "webp"];
 
 /// 预览图片最大尺寸
 const PREVIEW_MAX: u32 = 2400;
+
+/// 返回前端运行配置。认证通常由反向代理（如 oauth2-proxy）处理；
+/// 这里仅暴露应用级开关和代理传来的用户标识，方便 UI 做降级。
+pub async fn app_config(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Json<serde_json::Value> {
+    let user = headers
+        .get("x-forwarded-user")
+        .or_else(|| headers.get("x-auth-request-user"))
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+    let email = headers
+        .get("x-forwarded-email")
+        .or_else(|| headers.get("x-auth-request-email"))
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty())
+        .map(|v| v.to_string());
+
+    Json(serde_json::json!({
+        "readOnly": state.read_only,
+        "user": user,
+        "email": email,
+    }))
+}
 
 /// 返回前端 index.html
 pub async fn serve_frontend() -> Response {
@@ -42,11 +68,7 @@ pub async fn serve_static(Path(path): Path<String>) -> Response {
     match StaticAssets::get(&path) {
         Some(content) => {
             let mime = mime_guess::from_path(&path).first_or_octet_stream();
-            (
-                [(header::CONTENT_TYPE, mime.as_ref())],
-                content.data,
-            )
-                .into_response()
+            ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
         }
         None => (StatusCode::NOT_FOUND, "Not found").into_response(),
     }
@@ -132,12 +154,16 @@ pub async fn list_photos(
             .filter(|e| {
                 // 跳过相对于 photos_root 路径中任一以 '@' 开头的组件
                 if let Ok(rel) = e.path().strip_prefix(&photos_root) {
-                    if rel.components().any(|c| c.as_os_str().to_string_lossy().starts_with('@')) {
+                    if rel
+                        .components()
+                        .any(|c| c.as_os_str().to_string_lossy().starts_with('@'))
+                    {
                         return false;
                     }
                 }
                 e.file_type().is_file() && {
-                    let ext = e.path()
+                    let ext = e
+                        .path()
                         .extension()
                         .and_then(|s| s.to_str())
                         .unwrap_or("")
@@ -149,13 +175,15 @@ pub async fn list_photos(
                 let path = entry.path().to_path_buf();
                 let metadata = entry.metadata().ok()?;
                 let size = metadata.len();
-                let mtime = metadata.modified().ok()?
-                    .duration_since(UNIX_EPOCH).ok()?
+                let mtime = metadata
+                    .modified()
+                    .ok()?
+                    .duration_since(UNIX_EPOCH)
+                    .ok()?
                     .as_secs();
-                let filename = path.file_name()
-                    .and_then(|s| s.to_str())?
-                    .to_string();
-                    let folder = path.parent()
+                let filename = path.file_name().and_then(|s| s.to_str())?.to_string();
+                let folder = path
+                    .parent()
                     .and_then(|p| p.strip_prefix(&photos_root).ok())
                     .and_then(|p| p.to_str())
                     .unwrap_or("")
@@ -165,7 +193,14 @@ pub async fn list_photos(
                 } else {
                     format!("{}/{}", folder, filename)
                 };
-                Some(WalkEntry { path, subpath, filename, folder, size, mtime })
+                Some(WalkEntry {
+                    path,
+                    subpath,
+                    filename,
+                    folder,
+                    size,
+                    mtime,
+                })
             })
             .collect()
     })
@@ -209,23 +244,32 @@ pub async fn list_photos(
         let bg_state = state.clone();
         // 在后台做阻塞的并行提取，不阻塞当前请求
         tokio::spawn(async move {
-            let results: Result<Vec<(String, CachedMeta)>, _> = tokio::task::spawn_blocking(move || {
-                use rayon::prelude::*;
-                bg_items
-                    .into_par_iter()
-                    .map(|(_i, path, subpath, mtime, size)| {
-                        let (mut exif, sort_key) = extract_exif(&path);
-                        if exif.image_width.is_none() || exif.image_height.is_none() {
-                            if let Ok((w, h)) = image::image_dimensions(&path) {
-                                exif.image_width = Some(w);
-                                exif.image_height = Some(h);
+            let results: Result<Vec<(String, CachedMeta)>, _> =
+                tokio::task::spawn_blocking(move || {
+                    use rayon::prelude::*;
+                    bg_items
+                        .into_par_iter()
+                        .map(|(_i, path, subpath, mtime, size)| {
+                            let (mut exif, sort_key) = extract_exif(&path);
+                            if exif.image_width.is_none() || exif.image_height.is_none() {
+                                if let Ok((w, h)) = image::image_dimensions(&path) {
+                                    exif.image_width = Some(w);
+                                    exif.image_height = Some(h);
+                                }
                             }
-                        }
-                        (subpath, CachedMeta { mtime, size, exif, sort_key })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .await;
+                            (
+                                subpath,
+                                CachedMeta {
+                                    mtime,
+                                    size,
+                                    exif,
+                                    sort_key,
+                                },
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
 
             if let Ok(new_cache) = results {
                 let mut cache = bg_state.meta_cache.write().await;
@@ -245,29 +289,33 @@ pub async fn list_photos(
     }
 
     // 步骤5：组装PhotoMeta列表并排序
-    let mut photos: Vec<PhotoMeta> = entries.into_iter().enumerate().map(|(i, e)| {
-        // 缓存未命中时（新文件 / 重命名后 / EXIF 还在后台异步提取），
-        // 返回 sort_key=0 作为占位。前端的 timeGroupOf 用 `if (!k)` 判断后
-        // 会归到「未知日期」组；之前曾误用 `e.mtime`（Unix 时间戳，10 位），
-        // 让前端按 14 位 YYYYMMDDHHMMSS 解析后显示成 "0000 年 17 月"。
-        let (exif, _cached_sort_key) = match cached.remove(&i) {
-            Some((exif, sk)) => (exif, sk),
-            None => (crate::models::ExifData::default(), 0i64),
-        };
-        let mut exif = exif;
-        if let Some(override_exif) = exif_overrides.get(&e.subpath) {
-            apply_exif_override(&mut exif, override_exif);
-        }
-        let sort_key = crate::exif::date_to_sort_key(exif.date_taken.as_deref());
-        PhotoMeta {
-            filename: e.filename,
-            folder: e.folder,
-            size: e.size,
-            mtime: e.mtime,
-            exif,
-            date_sort_key: sort_key,
-        }
-    }).collect();
+    let mut photos: Vec<PhotoMeta> = entries
+        .into_iter()
+        .enumerate()
+        .map(|(i, e)| {
+            // 缓存未命中时（新文件 / 重命名后 / EXIF 还在后台异步提取），
+            // 返回 sort_key=0 作为占位。前端的 timeGroupOf 用 `if (!k)` 判断后
+            // 会归到「未知日期」组；之前曾误用 `e.mtime`（Unix 时间戳，10 位），
+            // 让前端按 14 位 YYYYMMDDHHMMSS 解析后显示成 "0000 年 17 月"。
+            let (exif, _cached_sort_key) = match cached.remove(&i) {
+                Some((exif, sk)) => (exif, sk),
+                None => (crate::models::ExifData::default(), 0i64),
+            };
+            let mut exif = exif;
+            if let Some(override_exif) = exif_overrides.get(&e.subpath) {
+                apply_exif_override(&mut exif, override_exif);
+            }
+            let sort_key = crate::exif::date_to_sort_key(exif.date_taken.as_deref());
+            PhotoMeta {
+                filename: e.filename,
+                folder: e.folder,
+                size: e.size,
+                mtime: e.mtime,
+                exif,
+                date_sort_key: sort_key,
+            }
+        })
+        .collect();
 
     match q.sort.as_deref().unwrap_or("date-asc") {
         "date-desc" => photos.sort_by(|a, b| b.date_sort_key.cmp(&a.date_sort_key)),
@@ -279,7 +327,10 @@ pub async fn list_photos(
 
     tracing::info!(
         "list_photos: {} files, {} cached, {} extracted in {:?}",
-        total, hits, extracted, started.elapsed()
+        total,
+        hits,
+        extracted,
+        started.elapsed()
     );
 
     Json(photos)
@@ -435,8 +486,9 @@ pub async fn serve_preview(
 }
 
 /// 管理接口：检查是否允许运行时切换照片目录（由环境变量控制）
-pub async fn allow_runtime_dir_change() -> Json<serde_json::Value> {
-    let allowed = std::env::var("ALLOW_RUNTIME_DIR_CHANGE").unwrap_or_else(|_| "false".into()) == "true";
+pub async fn allow_runtime_dir_change(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let allowed = !state.read_only
+        && std::env::var("ALLOW_RUNTIME_DIR_CHANGE").unwrap_or_else(|_| "false".into()) == "true";
     Json(serde_json::json!({"allowed": allowed}))
 }
 
@@ -445,8 +497,15 @@ pub async fn set_photos_dir(
     State(state): State<AppState>,
     Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    if state.read_only {
+        return Err((StatusCode::FORBIDDEN, "read-only mode enabled".to_string()));
+    }
+
     if std::env::var("ALLOW_RUNTIME_DIR_CHANGE").unwrap_or_else(|_| "false".into()) != "true" {
-        return Err((StatusCode::FORBIDDEN, "runtime dir change disabled".to_string()));
+        return Err((
+            StatusCode::FORBIDDEN,
+            "runtime dir change disabled".to_string(),
+        ));
     }
 
     let path = match body.get("path").and_then(|v| v.as_str()) {

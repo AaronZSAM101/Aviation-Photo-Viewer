@@ -22,6 +22,11 @@ function pathExistsInCurrentState(dst, src) {
 }
 
 export function openFileOpDialog(kind, src) {
+  if (state.readOnly) {
+    alert('当前为只读模式，管理操作已禁用');
+    return;
+  }
+
   const parsed = splitSubpath(src);
   state.pendingFileOp = { kind, src, srcFolder: parsed.folder, srcName: parsed.name };
 
@@ -56,6 +61,11 @@ export function openFileOpDialog(kind, src) {
 }
 
 export async function commitFileOp() {
+  if (state.readOnly) {
+    alert('当前为只读模式，管理操作已禁用');
+    return;
+  }
+
   let dst = '';
   let replace = false;
   const op = state.pendingFileOp;
@@ -96,6 +106,11 @@ export async function commitFileOp() {
 }
 
 export function openBulkMoveDialog() {
+  if (state.readOnly) {
+    alert('当前为只读模式，管理操作已禁用');
+    return;
+  }
+
   const sels = [...state.selectedSubpaths];
   if (!sels.length) { alert('请先选择要移动的照片'); return; }
   
@@ -122,6 +137,11 @@ export function openBulkMoveDialog() {
 }
 
 export async function commitBulkMove() {
+  if (state.readOnly) {
+    alert('当前为只读模式，管理操作已禁用');
+    return;
+  }
+
   const dstFolder = $('modal-bulk-move-folder').value;
   await stageBulkMove(dstFolder);
   closeModal('modal-bulk-move');

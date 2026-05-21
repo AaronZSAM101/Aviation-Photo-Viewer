@@ -33,6 +33,8 @@ COPY --from=builder /app/target/release/photo-viewer /usr/local/bin/photo-viewer
 VOLUME ["/photos"]
 ENV PHOTOS_DIR=/photos
 ENV PORT=80
+ENV HOST=0.0.0.0
+ENV READ_ONLY=false
 
 EXPOSE 80
 

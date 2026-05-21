@@ -53,6 +53,9 @@ export const state = {
   baseView:    'flat',
   timeScale:   'none',
   collapseAll: false,
+  readOnly:    false,
+  user:        null,
+  email:       null,
 
   // 数据
   photos:         [],

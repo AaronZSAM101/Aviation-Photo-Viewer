@@ -4,6 +4,48 @@ import { syncSelectionWithPhotos, clearSelection } from './selection.js';
 import { render, updateCardStagedIndicators } from './render.js';
 import { joinSubpath, splitSubpath } from './utils.js';
 
+function ensureWritable() {
+  if (!state.readOnly) return true;
+  alert('当前为只读模式，管理操作已禁用');
+  return false;
+}
+
+function setHidden(id, hidden) {
+  const el = document.getElementById(id);
+  if (el) el.hidden = hidden;
+}
+
+function applyReadOnlyUI() {
+  const hidden = !!state.readOnly;
+  [
+    'btn-bulk-move',
+    'btn-bulk-delete',
+    'btn-stage-list',
+    'btn-trash',
+    'btn-admin-setdir',
+    'v-exif-edit-btn',
+    'v-rename-btn',
+    'v-move-btn',
+    'v-copy-btn',
+    'v-delete-btn',
+    'v-staged-pill',
+  ].forEach(id => setHidden(id, hidden));
+}
+
+export async function loadConfig() {
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store' });
+    if (!res.ok) return;
+    const config = await res.json();
+    state.readOnly = !!config.readOnly;
+    state.user = config.user || null;
+    state.email = config.email || null;
+    applyReadOnlyUI();
+  } catch (e) {
+    state.readOnly = false;
+  }
+}
+
 export async function loadPhotos() {
   dom.loading.classList.add('show');
   dom.loadingMsg.textContent = '读取照片…';
@@ -52,6 +94,7 @@ export async function fetchStagedOps() {
 }
 
 export async function stageSingleDelete(sp) {
+  if (!ensureWritable()) return;
   try {
     const res = await fetch('/api/stage', {
       method: 'POST',
@@ -67,6 +110,7 @@ export async function stageSingleDelete(sp) {
 }
 
 export async function stageBulkDelete() {
+  if (!ensureWritable()) return;
   const sels = [...state.selectedSubpaths];
   if (!sels.length) { alert('请先选择要删除的照片'); return; }
   for (const s of sels) {
@@ -83,6 +127,7 @@ export async function stageBulkDelete() {
 }
 
 export async function stageBulkMove(dstFolder) {
+  if (!ensureWritable()) return;
   const sels = [...state.selectedSubpaths];
   if (!sels.length) { alert('请先选择要移动的照片'); return; }
   for (const s of sels) {
@@ -101,6 +146,7 @@ export async function stageBulkMove(dstFolder) {
 }
 
 export async function applyStaged() {
+  if (!ensureWritable()) return;
   const res = await fetch('/api/stage/apply', { method: 'POST' });
   if (res.ok) {
     const j = await res.json();
@@ -113,6 +159,7 @@ export async function applyStaged() {
 }
 
 export async function clearAllStaged() {
+  if (!ensureWritable()) return;
   if (!confirm('确定清空所有分批操作？')) return;
   await fetch('/api/stage/clear', { method: 'POST' });
   state.stagedDeletes.clear();
@@ -132,7 +179,7 @@ export async function refreshStagedList() {
         <strong>${o.kind}</strong> ${o.src}${o.dst ? ' → ' + o.dst : ''}
       </div>
       <div class="staged-item-actions">
-        <button data-action="remove-staged" data-id="${o.id}">删除</button>
+        ${state.readOnly ? '' : `<button data-action="remove-staged" data-id="${o.id}">删除</button>`}
       </div>
     </div>
   `).join('') : '<p style="color:var(--muted)">没有分批操作</p>';
@@ -140,6 +187,7 @@ export async function refreshStagedList() {
 }
 
 export async function removeStagedOp(id) {
+  if (!ensureWritable()) return;
   await fetch('/api/stage/remove/' + id, { method: 'POST' });
   await fetchStagedOps();
   updateCardStagedIndicators();
@@ -158,7 +206,7 @@ export async function showTrash() {
     <div class="trash-item">
       <div class="trash-item-name">${item.name}</div>
       <div class="trash-item-actions">
-        <button data-action="restore" data-name="${item.name}">恢复</button>
+        ${state.readOnly ? '' : `<button data-action="restore" data-name="${item.name}">恢复</button>`}
       </div>
     </div>
   `).join('') : '<p style="color:var(--muted)">回收站为空</p>';
@@ -167,6 +215,7 @@ export async function showTrash() {
 }
 
 export async function stageRestore(trashName) {
+  if (!ensureWritable()) return;
   await fetch('/api/stage', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -192,6 +241,7 @@ export async function allowRuntimeDirChange() {
 }
 
 export async function setPhotosDir(path) {
+  if (!ensureWritable()) throw new Error('当前为只读模式');
   const res = await fetch('/api/admin/set_photos_dir', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

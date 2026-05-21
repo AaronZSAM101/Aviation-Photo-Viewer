@@ -2,13 +2,21 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use std::{path::PathBuf, sync::Arc, collections::HashMap};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 
-use photo_viewer::{
-    models::AppState,
-    handlers, file_ops, hash, exif_edit,
-};
+use photo_viewer::{exif_edit, file_ops, handlers, hash, models::AppState};
+
+fn env_flag(name: &str) -> bool {
+    matches!(
+        std::env::var(name)
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
 
 async fn persist_meta_cache_atomic(
     cache_path: &PathBuf,
@@ -52,19 +60,26 @@ async fn main() {
         PathBuf::from("/photos")
     };
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
-    let addr = format!("0.0.0.0:{}", port);
+    let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    let addr = format!("{}:{}", host, port);
+    let read_only = env_flag("READ_ONLY");
 
     if !photos_dir.exists() {
-        eprintln!("⚠  Photos directory does not exist: {}", photos_dir.display());
+        eprintln!(
+            "⚠  Photos directory does not exist: {}",
+            photos_dir.display()
+        );
         eprintln!("   Mount your photo folder with -v /your/photos:/photos");
     }
 
     tracing::info!("📷  Photo Viewer");
     tracing::info!("    Photos → {}", photos_dir.display());
     tracing::info!("    Listening on http://{}", addr);
+    tracing::info!("    Read-only mode → {}", read_only);
 
     let state = AppState {
         photos_dir: Arc::new(RwLock::new(photos_dir.clone())),
+        read_only,
         thumb_cache: Arc::new(RwLock::new(HashMap::new())),
         preview_cache: Arc::new(RwLock::new(HashMap::new())),
         staged_ops: Arc::new(RwLock::new(Vec::new())),
@@ -80,13 +95,18 @@ async fn main() {
     if cache_file.exists() {
         match tokio::fs::read_to_string(&cache_file).await {
             Ok(s) => {
-                match serde_json::from_str::<HashMap<String, photo_viewer::models::CachedMeta>>(&s) {
+                match serde_json::from_str::<HashMap<String, photo_viewer::models::CachedMeta>>(&s)
+                {
                     Ok(map) => {
                         let mut cache_guard = state.meta_cache.write().await;
                         for (k, v) in map {
                             cache_guard.insert(k, v);
                         }
-                        tracing::info!("Loaded meta_cache from {} ({} entries)", cache_file.display(), cache_guard.len());
+                        tracing::info!(
+                            "Loaded meta_cache from {} ({} entries)",
+                            cache_file.display(),
+                            cache_guard.len()
+                        );
                     }
                     Err(e) => tracing::warn!("Failed to parse meta cache: {}", e),
                 }
@@ -155,6 +175,7 @@ async fn main() {
         .route("/view", get(handlers::serve_frontend))
         .route("/view/*path", get(handlers::serve_frontend))
         .route("/static/*path", get(handlers::serve_static))
+        .route("/api/config", get(handlers::app_config))
         .route("/api/photos", get(handlers::list_photos))
         .route("/photos/*subpath", get(handlers::serve_photo))
         .route("/preview/*subpath", get(handlers::serve_preview))
@@ -167,9 +188,15 @@ async fn main() {
         .route("/api/trash/list", get(file_ops::list_trash))
         .route("/api/hash/*subpath", get(hash::hash_file))
         .route("/api/compare", get(hash::compare_photos))
-        .route("/api/exif/lens/*subpath", get(handlers::lens_model_for_photo))
+        .route(
+            "/api/exif/lens/*subpath",
+            get(handlers::lens_model_for_photo),
+        )
         .route("/api/exif/update", post(exif_edit::update_exif))
-        .route("/api/admin/allow_set_dir", get(handlers::allow_runtime_dir_change))
+        .route(
+            "/api/admin/allow_set_dir",
+            get(handlers::allow_runtime_dir_change),
+        )
         .route("/api/admin/set_photos_dir", post(handlers::set_photos_dir))
         .with_state(state.clone());
 
@@ -202,11 +229,9 @@ async fn main() {
             let guard = shutdown_exif_overrides.read().await;
             guard.clone()
         };
-        if let Err(e) = exif_edit::persist_exif_overrides_atomic(
-            &shutdown_exif_overrides_path,
-            &exif_snapshot,
-        )
-        .await
+        if let Err(e) =
+            exif_edit::persist_exif_overrides_atomic(&shutdown_exif_overrides_path, &exif_snapshot)
+                .await
         {
             tracing::warn!("Failed to flush exif overrides on shutdown: {}", e);
         }
@@ -217,4 +242,3 @@ async fn main() {
         .await
         .expect("Server error");
 }
-

@@ -131,6 +131,10 @@ export function refreshCurrentViewer(targetSubpath = null) {
 }
 
 export async function viewerToggleDelete() {
+  if (state.readOnly) {
+    alert('当前为只读模式，管理操作已禁用');
+    return;
+  }
   const sp = currentViewerSubpath();
   if (!sp) return;
   if (state.stagedDeletes.has(sp)) {
