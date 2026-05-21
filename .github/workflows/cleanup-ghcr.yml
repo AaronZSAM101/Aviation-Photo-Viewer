@@ -1,0 +1,119 @@
+name: Cleanup GHCR old container versions
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: 'Number of versions to keep (per package)'
+        required: false
+        default: '5'
+      dry_run:
+        description: 'If true, only list versions that would be deleted (no deletion)'
+        required: false
+        default: 'true'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  cleanup:
+    name: Cleanup GHCR packages
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cleanup GHCR package versions (supports dry_run)
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const core = require('@actions/core');
+            const owner = context.repo.owner;
+            const packageType = 'container';
+            const packageName = context.repo.repo; // repo name
+            const keep = parseInt((github.event && github.event.inputs && github.event.inputs.keep) || '5', 10) || 5;
+            const dryRunInput = (github.event && github.event.inputs && github.event.inputs.dry_run) || 'true';
+            const dryRun = String(dryRunInput).toLowerCase() === 'true';
+
+            async function ownerIsOrg(name) {
+              try {
+                await github.rest.orgs.get({ org: name });
+                return true;
+              } catch (e) {
+                return false;
+              }
+            }
+
+            const isOrg = await ownerIsOrg(owner);
+
+            async function listAllVersions() {
+              const all = [];
+              let page = 1;
+              while (true) {
+                let resp;
+                if (isOrg) {
+                  resp = await github.rest.packages.listPackageVersionsForOrganization({
+                    org: owner,
+                    package_type: packageType,
+                    package_name: packageName,
+                    per_page: 100,
+                    page
+                  });
+                } else {
+                  resp = await github.rest.packages.listPackageVersionsForUser({
+                    username: owner,
+                    package_type: packageType,
+                    package_name: packageName,
+                    per_page: 100,
+                    page
+                  });
+                }
+                if (!resp || !resp.data || resp.data.length === 0) break;
+                all.push(...resp.data);
+                if (resp.data.length < 100) break;
+                page++;
+              }
+              return all;
+            }
+
+            const versions = await listAllVersions();
+            core.info(`Found ${versions.length} versions for package ${packageName}`);
+            versions.sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+
+            const toDelete = versions.slice(keep);
+            core.info(`Keeping ${Math.min(keep, versions.length)} versions; candidate deletions: ${toDelete.length}`);
+
+            if (toDelete.length === 0) {
+              core.info('No versions to delete.');
+              return;
+            }
+
+            for (const v of toDelete) {
+              try {
+                if (dryRun) {
+                  core.info(`DRY-RUN: Would delete version ${v.id} (created: ${v.created_at}, tags: ${v.metadata && v.metadata.container && v.metadata.container.tags ? v.metadata.container.tags.join(',') : 'none'})`);
+                } else {
+                  if (isOrg) {
+                    await github.rest.packages.deletePackageVersionForOrganization({
+                      org: owner,
+                      package_type: packageType,
+                      package_name: packageName,
+                      package_version_id: v.id
+                    });
+                  } else {
+                    await github.rest.packages.deletePackageVersionForUser({
+                      username: owner,
+                      package_type: packageType,
+                      package_name: packageName,
+                      package_version_id: v.id
+                    });
+                  }
+                  core.info(`Deleted version ${v.id} (created: ${v.created_at})`);
+                }
+              } catch (err) {
+                core.warning(`Failed to process version ${v.id}: ${err}`);
+              }
+            }
+
+            core.info('Cleanup run complete.');
