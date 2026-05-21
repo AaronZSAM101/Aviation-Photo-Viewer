@@ -54,6 +54,7 @@ export const state = {
   timeScale:   'none',
   collapseAll: false,
   readOnly:    false,
+  appVersion:  null,
   user:        null,
   email:       null,
 

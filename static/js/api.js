@@ -48,6 +48,7 @@ export async function loadConfig() {
     if (!res.ok) return;
     const config = await res.json();
     state.readOnly = !!config.readOnly;
+    state.appVersion = config.version || null;
     state.user = config.user || null;
     state.email = config.email || null;
     applyReadOnlyUI();

@@ -58,53 +58,46 @@ podman run --rm \
 
 本项目没有内置账号系统。若端口直接暴露到公网，知道链接的人可以查看照片，并在非只读模式下执行移动、删除、重命名、EXIF 编辑等操作。
 
-推荐使用 **GitHub OAuth + oauth2-proxy + Caddy** 作为公网入口：
+推荐使用 **Authentik OpenID Connect + oauth2-proxy** 作为公网入口：
 
 ```text
 Internet
-  -> Caddy :443
+  -> yushen.online:39777
   -> oauth2-proxy :4180
-  -> photo-viewer :3000
+  -> photo-viewer :80
 ```
 
-GitHub OAuth App 配置：
+Authentik / OpenID 应用配置：
 
 | 字段 | 示例 |
 |------|------|
-| Homepage URL | `https://photos.example.com` |
-| Authorization callback URL | `https://photos.example.com/oauth2/callback` |
+| Provider | OpenID Connect / OAuth2 |
+| Issuer / Discovery | `https://auth.sparrowhe.top/application/o/photo-viewer/.well-known/openid-configuration` |
+| Redirect URI（本地） | `http://localhost:3000/oauth2/callback` |
+| Redirect URI（生产） | `http://yushen.online:39777/oauth2/callback` |
 
-oauth2-proxy 关键配置示例：
+仓库内已提供 oauth2-proxy 配置：
 
-```text
-provider = "github"
-client_id = "<GitHub OAuth Client ID>"
-client_secret = "<GitHub OAuth Client Secret>"
-cookie_secret = "<openssl rand -base64 32>"
-email_domains = ["*"]
-github_users = ["your-github-user", "friend-github-user"]
-upstreams = ["http://photo-viewer:3000"]
-http_address = "0.0.0.0:4180"
-reverse_proxy = true
-cookie_secure = true
+```bash
+deploy/oauth2-proxy.cfg         # 通用 OIDC 配置，不放 secret
+deploy/oauth2-proxy.local.env   # 本地 localhost:3000 调试
+deploy/oauth2-proxy.prod.env    # 群晖 / yushen.online:39777
 ```
 
-Caddyfile 示例：
+群晖 Container Manager 推荐使用 Compose 项目：
 
-```caddyfile
-photos.example.com {
-  reverse_proxy oauth2-proxy:4180
-}
+```bash
+deploy/docker-compose.synology.yml
 ```
 
-photo-viewer 公网建议环境变量：
+photo-viewer 公网环境变量：
 
 ```bash
 HOST=0.0.0.0
-READ_ONLY=true
+READ_ONLY=false
 ```
 
-`READ_ONLY=true` 会在后端拒绝写接口，并在前端隐藏管理按钮。GitHub OAuth 负责“谁能进入”，只读模式负责“进入后不能改/删照片”。
+`READ_ONLY=false` 允许登录用户管理照片，包括移动、删除、重命名和 EXIF 编辑。若只想开放浏览，把它改成 `READ_ONLY=true`，后端会拒绝写接口，前端也会隐藏管理按钮。
 
 ---
 

@@ -72,7 +72,7 @@ async fn main() {
         eprintln!("   Mount your photo folder with -v /your/photos:/photos");
     }
 
-    tracing::info!("📷  Photo Viewer");
+    tracing::info!("📷  Photo Viewer {}", env!("PHOTO_VIEWER_VERSION"));
     tracing::info!("    Photos → {}", photos_dir.display());
     tracing::info!("    Listening on http://{}", addr);
     tracing::info!("    Read-only mode → {}", read_only);
