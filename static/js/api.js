@@ -16,6 +16,10 @@ export async function loadPhotos() {
       fetchStagedOps(),
     ]);
     state.photos = Array.isArray(photosRes) ? photosRes : (photosRes.photos || []);
+    // photos 数组被替换 → 之前缓存的搜索索引（按旧数组下标存）作废，
+    // 否则 filterPhotos 会用旧下标在新数组里取错照片（包括不匹配搜索词的）。
+    state.searchIndex    = null;
+    state.lastSearchTerm = '';
     syncSelectionWithPhotos();
     dom.prog.style.width = '100%';
     render();
