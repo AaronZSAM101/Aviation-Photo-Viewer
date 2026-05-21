@@ -28,7 +28,6 @@ jobs:
         uses: actions/github-script@v6
         with:
           script: |
-            const core = require('@actions/core');
             const owner = context.repo.owner;
             const packageType = 'container';
             const packageName = context.repo.repo; // repo name
