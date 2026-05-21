@@ -778,14 +778,20 @@ input[type="text"]:focus,input[type="search"]:focus{outline:none;border-color:va
     gap:6px;
   }
   #vinfo.charts-open:not(.exif-on) > #v-charts.in-info{
-    flex:1 1 auto;
+    flex:0 0 auto;
     width:100%;
     max-width:none;
     min-width:0;
   }
-  /* 仅 charts 时 vstage 抬出的空间也对应缩小 */
-  #vstage.info-open.chart-open-one:not(.exif-on-stage),
-  #vstage.info-open.chart-open-two:not(.exif-on-stage){padding-bottom:30vh}
+  /* 关键：vinfo 高度内容驱动时不能用 flex:1 1 0（会塌成 0），改用显式高度 */
+  #vinfo.charts-open:not(.exif-on) > #v-charts.in-info .chart-panel.show{
+    flex:0 0 auto;
+    height:115px;
+  }
+  /* 仅 charts 时 vstage 抬出的空间对应缩小：
+     单 chart ≈ 115+20padding = 135px，双 chart ≈ 115*2+6gap+20 = 256px */
+  #vstage.info-open.chart-open-one:not(.exif-on-stage){padding-bottom:20vh}
+  #vstage.info-open.chart-open-two:not(.exif-on-stage){padding-bottom:34vh}
 }
 
 @media (max-width: 560px){
