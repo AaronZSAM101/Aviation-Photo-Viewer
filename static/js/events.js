@@ -199,7 +199,7 @@ export function bindAllEvents() {
   });
   $('trash-list').addEventListener('click', e => {
     const btn = e.target.closest('[data-action="restore"]');
-    if (btn) stageRestore(btn.dataset.name);
+    if (btn) stageRestore(btn.dataset.name, btn.dataset.original || '');
   });
 
   // ── 卡片右键菜单 ──────────────────────────────────────────────────────

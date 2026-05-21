@@ -10,6 +10,16 @@ function ensureWritable() {
   return false;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, ch => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch]));
+}
+
 function setHidden(id, hidden) {
   const el = document.getElementById(id);
   if (el) el.hidden = hidden;
@@ -202,24 +212,31 @@ export async function showStagedList() {
 export async function showTrash() {
   const res  = await fetch('/api/trash/list');
   const list = await res.json();
-  const html = list.length ? list.map(item => `
+  const html = list.length ? list.map(item => {
+    const trashName = escapeHtml(item.name);
+    const original = escapeHtml(item.original || '');
+    const displayName = original || trashName;
+    return `
     <div class="trash-item">
-      <div class="trash-item-name">${item.name}</div>
+      <div class="trash-item-name" title="${trashName}">${displayName}</div>
       <div class="trash-item-actions">
-        ${state.readOnly ? '' : `<button data-action="restore" data-name="${item.name}">恢复</button>`}
+        ${state.readOnly ? '' : `<button data-action="restore" data-name="${trashName}" data-original="${original}">恢复</button>`}
       </div>
     </div>
-  `).join('') : '<p style="color:var(--muted)">回收站为空</p>';
+  `;
+  }).join('') : '<p style="color:var(--muted)">回收站为空</p>';
   document.getElementById('trash-list').innerHTML = html;
   document.getElementById('modal-trash').classList.add('show');
 }
 
-export async function stageRestore(trashName) {
+export async function stageRestore(trashName, originalPath = '') {
   if (!ensureWritable()) return;
+  const body = { kind: 'restore', src: '.trash/' + trashName };
+  if (originalPath) body.dst = originalPath;
   await fetch('/api/stage', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ kind: 'restore', src: '.trash/' + trashName }),
+    body: JSON.stringify(body),
   });
   alert('已加入分批（恢复）');
   showTrash();
