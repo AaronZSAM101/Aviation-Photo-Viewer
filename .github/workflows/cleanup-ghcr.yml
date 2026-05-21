@@ -60,13 +60,12 @@ jobs:
                     page
                   });
                 } else {
-                  resp = await github.rest.packages.listPackageVersionsForUser({
-                    username: owner,
+                  resp = await github.rest.packages.listPackageVersionsForAuthenticatedUser({
                     package_type: packageType,
                     package_name: packageName,
                     per_page: 100,
                     page
-                  });
+                    });
                 }
                 if (!resp || !resp.data || resp.data.length === 0) break;
                 all.push(...resp.data);
