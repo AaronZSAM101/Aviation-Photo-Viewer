@@ -4,6 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Photo Viewer</title>
+<!-- 在 CSS 加载/首屏渲染前同步应用主题，避免 FOUC（短暂闪烁错配色） -->
+<script>
+  (function(){
+    try {
+      var t = localStorage.getItem('theme');
+      if (t === 'light' || t === 'dark') {
+        document.documentElement.setAttribute('data-theme', t);
+      }
+    } catch(e) {}
+  })();
+</script>
 <link rel="stylesheet" href="/static/css/styles.css">
 </head>
 <body>
@@ -53,6 +64,7 @@
     <button id="btn-stage-list">📄 分批列表</button>
     <button id="btn-trash">♻️ 回收站</button>
     <button id="btn-shortcuts">⌨ 快捷键</button>
+    <button id="btn-theme" title="主题：自动 / 亮 / 暗">◐</button>
     <button id="btn-admin-setdir" title="切换照片目录">⚙️ 目录</button>
 
     <span class="stats" id="stats">—</span>
@@ -175,7 +187,7 @@
     </div>
     <div class="modal-body">
       <label style="font-size:11px;color:var(--muted)">原文件:</label>
-      <div id="modal-file-op-src" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--accent2);margin-bottom:12px;word-break:break-all"></div>
+      <div id="modal-file-op-src" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--info);margin-bottom:12px;word-break:break-all"></div>
 
       <div id="op-rename-fields" style="display:none">
         <label style="font-size:11px;color:var(--muted)">新文件名:</label>
@@ -185,7 +197,7 @@
       <div id="op-move-fields" style="display:none">
         <label style="font-size:11px;color:var(--muted)">目标文件夹:</label>
         <select id="modal-move-folder" style="width:100%;margin-bottom:8px"></select>
-        <div id="modal-move-preview" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--accent2)"></div>
+        <div id="modal-move-preview" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--info)"></div>
       </div>
 
       <div id="op-path-fields" style="display:none">
@@ -207,7 +219,7 @@
       <button class="modal-close" data-close-modal="modal-exif">×</button>
     </div>
     <div class="modal-body">
-      <div id="exif-edit-src" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--accent2);margin-bottom:14px;word-break:break-all"></div>
+      <div id="exif-edit-src" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--info);margin-bottom:14px;word-break:break-all"></div>
       <div id="exif-edit-form" class="exif-form-grid">
         <label class="exif-field"><span>拍摄时间</span>
           <div style="display:flex;gap:8px;align-items:center">
@@ -249,11 +261,11 @@
     </div>
     <div class="modal-body">
       <label style="font-size:11px;color:var(--muted)">选中的照片数量:</label>
-      <div id="modal-bulk-move-count" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--accent2);margin-bottom:12px">—</div>
+      <div id="modal-bulk-move-count" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--info);margin-bottom:12px">—</div>
       
       <label style="font-size:11px;color:var(--muted)">目标文件夹:</label>
       <select id="modal-bulk-move-folder" style="width:100%;margin-bottom:8px"></select>
-      <div id="modal-bulk-move-preview" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--accent2)"></div>
+      <div id="modal-bulk-move-preview" style="padding:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;font-size:11px;color:var(--info)"></div>
     </div>
     <div class="modal-footer">
       <button data-close-modal="modal-bulk-move">取消</button>

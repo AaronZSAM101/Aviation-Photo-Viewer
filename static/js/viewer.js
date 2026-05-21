@@ -250,6 +250,8 @@ export function fitGridToImage() {
   if (!img || !img.getBoundingClientRect) return;
   const stage  = dom.vStage.getBoundingClientRect();
   const r      = img.getBoundingClientRect();
+  const fineGridX = Math.max(4, r.width  * 25 / 1024);
+  const fineGridY = Math.max(4, r.height * 25 / 683);
   const styles = {
     left:   (r.left - stage.left) + 'px',
     top:    (r.top  - stage.top ) + 'px',
@@ -258,6 +260,8 @@ export function fitGridToImage() {
   };
   Object.assign(dom.vGrid.style,     styles);
   Object.assign(dom.vFineGrid.style, styles);
+  dom.vFineGrid.style.setProperty('--fine-grid-x', fineGridX + 'px');
+  dom.vFineGrid.style.setProperty('--fine-grid-y', fineGridY + 'px');
 }
 
 // ── 直方图 ────────────────────────────────────────────────────────────────

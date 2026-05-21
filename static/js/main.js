@@ -5,8 +5,10 @@ import { state } from './state.js';
 import { subpath } from './utils.js';
 import { openViewer } from './viewer.js';
 import { applyRouteStateFromLocation, consumeInitialViewerSubpath, syncRoute } from './router.js';
+import { initTheme } from './theme.js';
 
 applyRouteStateFromLocation();
+initTheme();
 bindAllEvents();
 
 // 管理界面：目录切换
