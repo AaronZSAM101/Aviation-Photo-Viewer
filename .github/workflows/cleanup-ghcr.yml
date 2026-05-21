@@ -6,11 +6,11 @@ on:
       keep:
         description: 'Number of versions to keep (per package)'
         required: false
-        default: '5'
+        default: '1'
       dry_run:
         description: 'If true, only list versions that would be deleted (no deletion)'
         required: false
-        default: 'true'
+        default: 'false'
 
 permissions:
   contents: read
@@ -31,8 +31,8 @@ jobs:
             const owner = context.repo.owner;
             const packageType = 'container';
             const packageName = context.repo.repo; // repo name
-            const keep = parseInt((github.event && github.event.inputs && github.event.inputs.keep) || '5', 10) || 5;
-            const dryRunInput = (github.event && github.event.inputs && github.event.inputs.dry_run) || 'true';
+            const keep = parseInt((github.event && github.event.inputs && github.event.inputs.keep) || '1', 10) || 1;
+            const dryRunInput = (github.event && github.event.inputs && github.event.inputs.dry_run) || 'false';
             const dryRun = String(dryRunInput).toLowerCase() === 'true';
 
             async function ownerIsOrg(name) {
