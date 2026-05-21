@@ -24,6 +24,9 @@ export function openViewer(idx) {
 
 export function closeViewer() {
   dom.viewer.classList.remove('show');
+  if (dom.vCharts && dom.vCharts.parentElement !== dom.vStage) {
+    dom.vStage.appendChild(dom.vCharts);
+  }
   dom.vImg.src = '';
   dom.vCanvas.width = dom.vCanvas.height = 0;
   syncRoute();
@@ -57,6 +60,8 @@ function showCurrent() {
   dom.vImg.onload = () => {
     dom.vSpin.classList.remove('show');
     fitGridToImage();
+    adjustVinfoHeight();
+    adjustVchartsPosition();
     refreshHistograms();
     prefetchAdjacent();
   };
@@ -90,8 +95,15 @@ function prefetchAdjacent() {
   [state.viewerIndex - 1, state.viewerIndex + 1].forEach(i => {
     const p = state.filteredPhotos[i];
     if (!p) return;
+    const url = previewUrl(p);
+    if (state.prefetchedPreviewUrls.has(url)) return;
+    state.prefetchedPreviewUrls.add(url);
+    if (state.prefetchedPreviewUrls.size > 80) {
+      const first = state.prefetchedPreviewUrls.values().next().value;
+      if (first) state.prefetchedPreviewUrls.delete(first);
+    }
     const img = new Image();
-    img.src = previewUrl(p);
+    img.src = url;
   });
 }
 
@@ -104,7 +116,7 @@ export function updateViewerStagedIndicator() {
   const sp = currentViewerSubpath();
   const isStaged = !!(sp && state.stagedDeletes.has(sp));
   dom.vDeleteBtn.classList.toggle('staged', isStaged);
-  dom.vDeleteBtn.textContent = isStaged ? '↩ 取消删除' : '🗑 删除';
+  dom.vDeleteBtn.textContent = isStaged ? '取消删除' : '删除';
   dom.vStagedPill.classList.toggle('show', isStaged);
 }
 
@@ -162,7 +174,7 @@ function renderInfoPanel(p) {
     ]},
   ].filter(Boolean);
 
-  dom.vInfo.innerHTML = sections.map(s => `
+  const sectionsHTML = sections.map(s => `
     <div class="sec">
       <div class="sec-title">${s.title}</div>
       ${s.rows.filter(([, v]) => v != null).map(([k, v]) => `
@@ -170,6 +182,25 @@ function renderInfoPanel(p) {
       `).join('')}
     </div>`).join('')
     + (!hasExif ? '<div class="no-exif-note">此文件不含 EXIF 数据</div>' : '');
+  // 用 .vinfo-sections 外壳把所有 sec 包起来，
+  // 这样在横向布局（手机竖屏 charts-open / 手机横屏 / 桌面）下，
+  // 整组 EXIF 才是 #vinfo 的"一个 flex 列"，不会被拆成多列。
+  dom.vInfo.innerHTML = `<div class="vinfo-sections">${sectionsHTML}</div>`;
+  syncChartHost();
+}
+
+function syncChartHost() {
+  if (!dom.vCharts || !dom.vInfo || !dom.vStage) return;
+  const isDesktop = window.matchMedia('(min-width: 901px)').matches;
+  const mobileLandscape = window.matchMedia('(max-width: 900px) and (orientation: landscape)').matches;
+  const mobilePortrait = window.matchMedia('(max-width: 900px) and (orientation: portrait)').matches;
+  // If EXIF panel is open, prefer hosting charts inside it on desktop, landscape or mobile portrait
+  const useInfoHost = state.infoOn && (isDesktop || mobileLandscape || mobilePortrait);
+  const host = useInfoHost ? dom.vInfo : dom.vStage;
+  if (dom.vCharts.parentElement !== host) {
+    host.prepend(dom.vCharts);
+  }
+  dom.vCharts.classList.toggle('in-info', useInfoHost);
 }
 
 // ── 污点检查：每通道直方图均衡（JetPhotos 风格）─────────────────────────
@@ -310,4 +341,79 @@ export function syncToggleButtons() {
   dom.vRgbPanel.classList.toggle('show',      state.rgbOn);
   dom.vHistPanel.classList.toggle('show',     state.histOn);
   dom.vInfo.classList.toggle('show',          state.infoOn);
+  syncChartHost();
+  dom.vStage.classList.toggle('info-open',    state.infoOn);
+  const chartCount = (state.rgbOn ? 1 : 0) + (state.histOn ? 1 : 0);
+  dom.vStage.classList.toggle('chart-open-one', chartCount === 1);
+  dom.vStage.classList.toggle('chart-open-two', chartCount === 2);
+  // mark vInfo when charts are visible so layout can adapt (EXIF full width when none)
+  if (dom.vInfo) dom.vInfo.classList.toggle('charts-open', chartCount > 0);
+  // Ensure v-charts visibility and pointer events when any chart is open
+  if (dom.vCharts) {
+    if (chartCount > 0) {
+      dom.vCharts.style.display = 'flex';
+      dom.vCharts.style.pointerEvents = 'auto';
+    } else {
+      dom.vCharts.style.display = '';
+      dom.vCharts.style.pointerEvents = 'none';
+    }
+    // ensure each panel has correct .show class (in case toggles were missed)
+    dom.vRgbPanel && dom.vRgbPanel.classList.toggle('show', state.rgbOn);
+    dom.vHistPanel && dom.vHistPanel.classList.toggle('show', state.histOn);
+  }
+  // Ensure EXIF panel height doesn't overlap image on small/portrait screens
+  try { adjustVinfoHeight(); } catch (e) { /* noop */ }
+  try { adjustVchartsPosition(); } catch (e) { /* noop */ }
 }
+
+// 限制竖屏下 EXIF 面板最大高度，使其不高于当前图片底端
+function adjustVinfoHeight() {
+  if (!dom.vInfo) return;
+  const isMobilePortrait = window.matchMedia('(max-width: 900px) and (orientation: portrait)').matches;
+  if (!isMobilePortrait) {
+    dom.vInfo.style.maxHeight = '';
+    return;
+  }
+  const imgEl = (dom.vCanvas.style.display === 'block') ? dom.vCanvas : dom.vImg;
+  if (!imgEl || !imgEl.getBoundingClientRect) return;
+  const r = imgEl.getBoundingClientRect();
+  const availBelow = Math.floor(window.innerHeight - r.bottom - 8); // 8px safety gap
+  // if no space below image, collapse max-height to 0 to avoid overlap
+  const maxH = Math.max(0, availBelow);
+  dom.vInfo.style.maxHeight = maxH + 'px';
+}
+
+window.addEventListener('resize', adjustVinfoHeight);
+window.addEventListener('orientationchange', adjustVinfoHeight);
+
+// Ensure charts floating in stage don't extend below the top of the image,
+// 但如果图像太高没有空间容纳 charts，则让 charts 直接覆盖在图像上沿，
+// 避免把整个 #v-charts 推出屏幕（会导致 RGB 整张看不见）。
+function adjustVchartsPosition() {
+  if (!dom.vCharts || !dom.vStage) return;
+  // if charts are moved into info host, let normal layout handle them
+  if (dom.vCharts.classList.contains('in-info')) {
+    dom.vCharts.style.transform = '';
+    return;
+  }
+  // 先清掉之前可能留下的 transform，再测量原始位置
+  dom.vCharts.style.transform = '';
+  const imgEl = (dom.vCanvas.style.display === 'block') ? dom.vCanvas : dom.vImg;
+  if (!imgEl || !imgEl.getBoundingClientRect) return;
+  const stageRect  = dom.vStage.getBoundingClientRect();
+  const imgRect    = imgEl.getBoundingClientRect();
+  const chartsRect = dom.vCharts.getBoundingClientRect();
+  // gap to keep between chart bottom and image top
+  const GAP = 8;
+  const overlap = (chartsRect.bottom) - (imgRect.top - GAP);
+  if (overlap <= 0) return;
+  // 至多把 charts 推到 stage 顶部 — 再往上就出屏了
+  const headroom = Math.max(0, chartsRect.top - stageRect.top);
+  const shift = Math.min(Math.ceil(overlap), headroom);
+  if (shift > 0) {
+    dom.vCharts.style.transform = `translateY(-${shift}px)`;
+  }
+}
+
+window.addEventListener('resize', () => { adjustVchartsPosition(); adjustVinfoHeight(); });
+window.addEventListener('orientationchange', () => { adjustVchartsPosition(); adjustVinfoHeight(); });

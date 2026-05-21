@@ -22,6 +22,7 @@ export const dom = {
   vGrid:         $('v-grid'),
   vSpin:         $('vspin'),
   vFineGrid:     $('v-finegrid'),
+  vCharts:       $('v-charts'),
   vInfo:         $('vinfo'),
   vRgbPanel:     $('v-rgb-panel'),
   vHistPanel:    $('v-hist-panel'),
@@ -62,6 +63,7 @@ export const state = {
   // 搜索索引
   searchIndex:    null,
   lastSearchTerm: '',
+  searchDebounceTimer: null,
 
   // 选择
   selectedSubpaths:  new Set(),
@@ -92,6 +94,9 @@ export const state = {
   cardMenuSrc:     null,
   cardMenuSrcs:    [],
   cardMenuIsBulk:  false,
+
+  // 预加载缓存：避免重复 new Image 导致浪费
+  prefetchedPreviewUrls: new Set(),
 };
 
 // ── 智能图片加载队列（控制并发数）──────────────────────────────────────────
@@ -126,4 +131,10 @@ class ImageLoader {
   }
 }
 
-export const imageLoader = new ImageLoader(6);
+function defaultImageConcurrency() {
+  const isMobile = window.matchMedia('(max-width: 900px), (pointer: coarse)').matches;
+  if (isMobile) return 2;
+  return 6;
+}
+
+export const imageLoader = new ImageLoader(defaultImageConcurrency());

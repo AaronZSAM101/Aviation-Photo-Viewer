@@ -9,7 +9,7 @@ import {
 import { syncRoute } from './router.js';
 import {
   render, applyCollapseStateToSections, refreshCollapseButton,
-  updateCardStagedIndicators,
+  updateCardStagedIndicators, handleCardInteraction,
 } from './render.js';
 import {
   closeViewer, navigate, applyEqualize, disableEqualize,
@@ -26,6 +26,8 @@ function openShortcutsModal() {
 }
 
 export function bindAllEvents() {
+  dom.content.addEventListener('click', handleCardInteraction);
+
   // ── Viewer toggle 按钮 ────────────────────────────────────────────────
   dom.vEqBtn.addEventListener('click', () => {
     state.equalizeOn = !state.equalizeOn;
@@ -90,7 +92,9 @@ export function bindAllEvents() {
 
   // ── 窗口事件 ──────────────────────────────────────────────────────────
   window.addEventListener('resize', () => {
-    if (dom.viewer.classList.contains('show')) fitGridToImage();
+    if (!dom.viewer.classList.contains('show')) return;
+    syncToggleButtons();
+    fitGridToImage();
   });
   window.addEventListener('keydown', e => {
     // Viewer 内的键盘快捷键
@@ -152,9 +156,13 @@ export function bindAllEvents() {
   $('btn-trash').addEventListener('click', showTrash);
   $('btn-shortcuts').addEventListener('click', openShortcutsModal);
   $('search-box').addEventListener('input', e => {
-    state.searchTerm = e.target.value;
-    render();
-    syncRoute();
+    const value = e.target.value;
+    if (state.searchDebounceTimer) clearTimeout(state.searchDebounceTimer);
+    state.searchDebounceTimer = setTimeout(() => {
+      state.searchTerm = value;
+      render();
+      syncRoute();
+    }, 120);
   });
 
   // ── Modal 关闭按钮（之前是 onclick 内联）──────────────────────────────
@@ -244,7 +252,7 @@ export function bindAllEvents() {
     if (!card) return;
     e.preventDefault();
 
-    const idx = parseInt(card.querySelector('input.selchk').dataset.idx, 10);
+    const idx = parseInt(card.dataset.photosIdx, 10);
     const p   = state.filteredPhotos[idx];
     if (!p) return;
 

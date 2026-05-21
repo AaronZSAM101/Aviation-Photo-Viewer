@@ -75,22 +75,26 @@
 <!-- ── Fullscreen viewer ───────────────────────────────────────────────── -->
 <div id="viewer">
   <div id="vtoolbar">
-    <button id="v-close" class="icon" title="关闭 (Esc)">✕</button>
-    <span id="v-name">—</span>
-    <span id="v-staged-pill">待删除</span>
-    <span id="v-counter">—</span>
-    <button id="v-equalize" title="检查污点 (E)">检查污点</button>
-    <button id="v-gridbtn" title="居中 (G)">居中</button>
-    <button id="v-finegridbtn" title="地平 (F)">地平</button>
-    <button id="v-rgbbtn" title="RGB (R)">RGB</button>
-    <button id="v-histbtn" title="直方图 (H)">直方图</button>
-    <button id="v-info-btn" class="active" title="EXIF (I)">EXIF</button>
-    <button id="v-exif-edit-btn" title="编辑 EXIF">编辑</button>
-    <span class="vsep"></span>
-    <button id="v-rename-btn" title="重命名">重命名</button>
-    <button id="v-move-btn" title="移动">移动</button>
-    <button id="v-copy-btn" title="复制">复制</button>
-    <button id="v-delete-btn" title="删除 (D)">🗑 删除</button>
+    <div id="v-toolbar-meta">
+      <button id="v-close" class="icon" title="关闭 (Esc)">✕</button>
+      <span id="v-name">—</span>
+      <span id="v-staged-pill">待删除</span>
+      <span id="v-counter">—</span>
+    </div>
+    <div id="v-toolbar-tools">
+      <button id="v-equalize" data-short="E" title="检查污点 (E)">检查污点</button>
+      <button id="v-gridbtn" data-short="G" title="居中 (G)">居中</button>
+      <button id="v-finegridbtn" data-short="F" title="地平 (F)">地平</button>
+      <button id="v-rgbbtn" data-short="R" title="RGB (R)">RGB</button>
+      <button id="v-histbtn" data-short="H" title="直方图 (H)">直方图</button>
+      <button id="v-info-btn" data-short="I" class="active" title="EXIF (I)">EXIF</button>
+      <button id="v-exif-edit-btn" data-short="编" title="编辑 EXIF">编辑</button>
+      <span class="vsep"></span>
+      <button id="v-rename-btn" data-short="重" title="重命名">重命名</button>
+      <button id="v-move-btn" data-short="移" title="移动">移动</button>
+      <button id="v-copy-btn" data-short="复" title="复制">复制</button>
+      <button id="v-delete-btn" data-short="删" title="删除 (D)">删除</button>
+    </div>
   </div>
 
   <div id="vmain">

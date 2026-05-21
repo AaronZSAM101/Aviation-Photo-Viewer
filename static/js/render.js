@@ -8,6 +8,8 @@ import {
 } from './selection.js';
 import { openViewer } from './viewer.js';
 
+let lazyObserver = null;
+
 // ── 搜索索引 ──────────────────────────────────────────────────────────────
 function buildSearchIndex() {
   if (state.searchIndex !== null && state.lastSearchTerm === state.searchTerm) return;
@@ -213,7 +215,9 @@ function renderTimeGrouped(list, scale) {
   entries.forEach(info => {
     const sec = makeSection(info.label, '📅', info.items.length);
     const grid = makeGrid();
-    info.items.forEach(({ p, idx }) => grid.appendChild(makeCard(p, ++state.globalIndex, idx)));
+    const frag = document.createDocumentFragment();
+    info.items.forEach(({ p, idx }) => frag.appendChild(makeCard(p, ++state.globalIndex, idx)));
+    grid.appendChild(frag);
     sec.appendChild(grid);
     dom.content.appendChild(sec);
   });
@@ -221,7 +225,9 @@ function renderTimeGrouped(list, scale) {
 
 function renderFlat(list) {
   const grid = makeGrid();
-  list.forEach((p, idx) => grid.appendChild(makeCard(p, ++state.globalIndex, idx)));
+  const frag = document.createDocumentFragment();
+  list.forEach((p, idx) => frag.appendChild(makeCard(p, ++state.globalIndex, idx)));
+  grid.appendChild(frag);
   dom.content.appendChild(grid);
 }
 
@@ -236,7 +242,9 @@ function renderGrouped(list) {
     const items = map.get(folder);
     const sec = makeSection(folder, '▤', items.length);
     const grid = makeGrid();
-    items.forEach(({ p, idx }) => grid.appendChild(makeCard(p, ++state.globalIndex, idx)));
+    const frag = document.createDocumentFragment();
+    items.forEach(({ p, idx }) => frag.appendChild(makeCard(p, ++state.globalIndex, idx)));
+    grid.appendChild(frag);
     sec.appendChild(grid);
     dom.content.appendChild(sec);
   });
@@ -272,7 +280,9 @@ function renderFolderTimeGrouped(list, scale) {
     timeEntries.forEach(info => {
       const sub  = makeSection(info.label, '📅', info.items.length);
       const grid = makeGrid();
-      info.items.forEach(({ p, idx }) => grid.appendChild(makeCard(p, ++state.globalIndex, idx)));
+      const frag = document.createDocumentFragment();
+      info.items.forEach(({ p, idx }) => frag.appendChild(makeCard(p, ++state.globalIndex, idx)));
+      grid.appendChild(frag);
       sub.appendChild(grid);
       sec.appendChild(sub);
     });
@@ -302,13 +312,14 @@ function makeCard(p, idx, photosIdx) {
     (isRenamed  ? ' staged-rename' : '') +
     (isSelected ? ' selected'      : '');
   card.dataset.sp = sp;
+  card.dataset.photosIdx = String(photosIdx);
   card.innerHTML = `
     <div class="thumb">
       <label style="position:absolute;left:6px;top:6px;z-index:5">
         <input type="checkbox" class="selchk" data-idx="${photosIdx}"${isSelected ? ' checked' : ''}>
       </label>
       <div class="loader"></div>
-      <img data-src="${thumbUrl(p)}" alt="${p.filename}">
+      <img data-src="${thumbUrl(p)}" alt="${p.filename}" decoding="async" fetchpriority="low">
       ${!hasExif ? '<span class="badge no-exif">NO EXIF</span>' : ''}
       ${isStaged  ? '<span class="badge staged">待删除</span>' : ''}
       ${isRenamed ? `<span class="badge rename" title="${renameBadgeTitle(sp)}">${renameText}</span>` : ''}
@@ -319,10 +330,42 @@ function makeCard(p, idx, photosIdx) {
       <div class="card-date">${fmt_date(p.exif.date_taken)}</div>
       <div class="card-meta">${p.exif.image_width && p.exif.image_height ? p.exif.image_width + '×' + p.exif.image_height + ' · ' : ''}${fmt_size(p.size)}</div>
     </div>`;
-  const checkbox = card.querySelector('input.selchk');
-  checkbox.addEventListener('click', e => {
+  return card;
+}
+
+// ── 虚拟滚动：进入视口时通过 imageLoader 加载图片 ────────────────────────
+export function lazyLoad() {
+  if (!lazyObserver) {
+    const mobileRootMargin = window.matchMedia('(max-width: 900px), (pointer: coarse)').matches
+      ? '120px'
+      : '300px';
+    lazyObserver = new IntersectionObserver(
+      entries => {
+        entries.forEach(e => {
+          if (!e.isIntersecting) return;
+          const img = e.target;
+          if (!img.src && img.dataset.src) imageLoader.load(img);
+          lazyObserver.unobserve(img);
+        });
+      },
+      { rootMargin: mobileRootMargin }
+    );
+  } else {
+    lazyObserver.disconnect();
+  }
+  dom.content.querySelectorAll('img[data-src]').forEach(img => lazyObserver.observe(img));
+}
+
+export function handleCardInteraction(e) {
+  const card = e.target.closest('.card');
+  if (!card) return;
+  const photosIdx = Number(card.dataset.photosIdx);
+  if (!Number.isFinite(photosIdx)) return;
+  const sp = card.dataset.sp;
+
+  if (e.target.closest('input.selchk')) {
     e.stopPropagation();
-    const checked = checkbox.checked;
+    const checked = !!e.target.checked;
     const anchorIdx = getSelectionAnchorIndex();
     if (e.shiftKey && anchorIdx != null) {
       selectRangeByIndex(anchorIdx, photosIdx, true);
@@ -332,33 +375,16 @@ function makeCard(p, idx, photosIdx) {
     else          state.selectedSubpaths.add(sp);
     state.selectionAnchorSp = sp;
     syncSelectionUI();
-  });
-  card.addEventListener('click', e => {
-    if (e.target.closest('input.selchk') || e.target.closest('label')) return;
-    if (e.metaKey || e.ctrlKey) { toggleSelectionAtIndex(photosIdx); return; }
-    if (e.shiftKey) {
-      const anchor    = getSelectionAnchorIndex();
-      const anchorIdx = anchor == null ? photosIdx : anchor;
-      selectRangeByIndex(anchorIdx, photosIdx, true);
-      return;
-    }
-    openViewer(photosIdx);
-  });
-  return card;
-}
+    return;
+  }
 
-// ── 虚拟滚动：进入视口时通过 imageLoader 加载图片 ────────────────────────
-export function lazyLoad() {
-  const obs = new IntersectionObserver(
-    entries => {
-      entries.forEach(e => {
-        if (e.isIntersecting) {
-          const img = e.target;
-          if (!img.src && img.dataset.src) imageLoader.load(img);
-        }
-      });
-    },
-    { rootMargin: '300px' }
-  );
-  dom.content.querySelectorAll('img[data-src]').forEach(img => obs.observe(img));
+  if (e.target.closest('label')) return;
+  if (e.metaKey || e.ctrlKey) { toggleSelectionAtIndex(photosIdx); return; }
+  if (e.shiftKey) {
+    const anchor    = getSelectionAnchorIndex();
+    const anchorIdx = anchor == null ? photosIdx : anchor;
+    selectRangeByIndex(anchorIdx, photosIdx, true);
+    return;
+  }
+  openViewer(photosIdx);
 }
