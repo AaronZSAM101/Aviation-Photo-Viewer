@@ -270,19 +270,3 @@ export async function setPhotosDir(path) {
   }
   return await res.json();
 }
-
-export async function selectPhotosDirWithTauri() {
-  // 优先尝试调用 Tauri 的命令（当在 Tauri 环境中时可用）
-  try {
-    if (window.__TAURI__ && window.__TAURI__.invoke) {
-      const p = await window.__TAURI__.invoke('select_photos_dir');
-      return p || null;
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  // 回退：用户输入路径
-  const manual = prompt('选择照片目录（输入绝对路径）');
-  return manual ? manual.trim() : null;
-}

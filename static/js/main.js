@@ -1,6 +1,6 @@
 // 入口模块：绑定所有事件，加载首屏数据
 import { bindAllEvents } from './events.js';
-import { loadConfig, loadPhotos, allowRuntimeDirChange, setPhotosDir, selectPhotosDirWithTauri } from './api.js';
+import { loadConfig, loadPhotos, allowRuntimeDirChange, setPhotosDir } from './api.js';
 import { state } from './state.js';
 import { subpath } from './utils.js';
 import { openViewer } from './viewer.js';
@@ -19,19 +19,6 @@ document.getElementById('btn-admin-setdir').addEventListener('click', async () =
     alert('服务器未启用运行时目录切换');
     return;
   }
-  // 如果在 Tauri 环境中，优先使用本地文件选择器
-  try {
-    const p = await selectPhotosDirWithTauri();
-    if (p) {
-      document.getElementById('setdir-msg').textContent = '正在切换到：' + p;
-      await setPhotosDir(p);
-      await loadPhotos();
-      return;
-    }
-  } catch (e) {
-    // ignore and fallback to modal
-  }
-
   document.getElementById('modal-setdir').classList.add('show');
 });
 

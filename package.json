@@ -3,8 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build:static": "echo 'static assets are ready'",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "build:static": "echo 'static assets are ready'"
   }
 }
