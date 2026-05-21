@@ -166,12 +166,73 @@ input[type="text"]:focus,input[type="search"]:focus{outline:none;border-color:va
 .modal-footer button.primary{background:var(--accent);color:#000;border-color:var(--accent)}
 .modal-footer button.primary:hover{background:#d9b777}
 
-.shortcut-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
-.shortcut-group{padding:12px;background:var(--surface2);border:1px solid var(--border2);border-radius:6px}
-.shortcut-group h3{font-size:12px;font-weight:600;color:var(--accent);margin-bottom:8px}
-.shortcut-list{display:grid;gap:6px}
-.shortcut-item{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;font-size:12px;line-height:1.45;color:var(--text)}
-.shortcut-key{font-family:var(--mono);font-size:10px;color:var(--accent2);white-space:nowrap;background:rgba(122,176,200,.1);border:1px solid rgba(122,176,200,.2);padding:2px 6px;border-radius:4px}
+/* ── 快捷键面板 ────────────────────────────────────────────────────── */
+.shortcut-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:18px 22px;
+}
+.shortcut-group{padding:0;background:transparent;border:none}
+.shortcut-group-wide{grid-column:1 / -1}
+.shortcut-group-title{
+  font-size:10px;
+  font-weight:600;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--muted);
+  margin:0 0 10px;
+  padding-bottom:6px;
+  border-bottom:1px solid var(--border2);
+}
+.shortcut-list{display:flex;flex-direction:column;gap:4px}
+.shortcut-row{
+  display:grid;
+  grid-template-columns:minmax(110px,auto) 1fr;
+  gap:14px;
+  align-items:center;
+  padding:5px 0;
+  border-radius:4px;
+  font-size:12px;
+  color:var(--text);
+}
+.shortcut-row:hover{background:rgba(255,255,255,.02)}
+.shortcut-keys{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+  align-items:center;
+  justify-content:flex-start;
+}
+/* 类键盘按键 chip */
+.shortcut-keys kbd{
+  font-family:var(--mono);
+  font-size:11px;
+  line-height:1;
+  color:var(--text);
+  background:linear-gradient(180deg,#2a2a2a 0%,#1f1f1f 100%);
+  border:1px solid #3a3a3a;
+  border-bottom-color:#1a1a1a;
+  border-radius:4px;
+  padding:4px 7px;
+  min-width:22px;
+  text-align:center;
+  display:inline-block;
+  box-shadow:0 1px 0 rgba(0,0,0,.5),inset 0 1px 0 rgba(255,255,255,.05);
+  white-space:nowrap;
+}
+.shortcut-keys .kbd-sep{
+  color:var(--hint);
+  font-size:10px;
+  font-family:var(--mono);
+  padding:0 1px;
+  user-select:none;
+}
+.shortcut-desc{
+  color:var(--text);
+  font-size:12px;
+  line-height:1.45;
+  letter-spacing:.01em;
+}
 
 .staged-item{display:flex;justify-content:space-between;align-items:center;padding:8px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;margin-bottom:8px;font-size:11px;font-family:var(--mono)}
 .staged-item-info{flex:1}

@@ -12,7 +12,7 @@
 <div id="loading"><div class="spinner"></div><span id="loading-msg">加载中…</span></div>
 
 <header>
-  <div class="logo">▣ PHOTO VIEWER</div>
+  <div class="logo">📷 PHOTO VIEWER</div>
   <div class="toolbar">
     <button id="btn-reload">↺ 刷新</button>
     <div class="sep"></div>
@@ -270,25 +270,79 @@
     </div>
     <div class="modal-body">
       <div class="shortcut-grid">
-        <div class="shortcut-group">
-          <h3>浏览器卡片</h3>
+
+        <section class="shortcut-group">
+          <h3 class="shortcut-group-title">浏览器卡片</h3>
           <div class="shortcut-list">
-            <div class="shortcut-item"><span>点击卡片空白区域</span><span class="shortcut-key">打开查看器</span></div>
-            <div class="shortcut-item"><span>点击复选框</span><span class="shortcut-key">切换选中</span></div>
-            <div class="shortcut-item"><span>Ctrl / Command + 点击卡片</span><span class="shortcut-key">追加 / 取消选中</span></div>
-            <div class="shortcut-item"><span>Shift + 点击卡片 / 复选框</span><span class="shortcut-key">范围选中</span></div>
-            <div class="shortcut-item"><span>右键卡片</span><span class="shortcut-key">打开操作菜单</span></div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>点击</kbd></div>
+              <div class="shortcut-desc">打开查看器</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>点击</kbd> <kbd>复选框</kbd></div>
+              <div class="shortcut-desc">切换选中</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>Ctrl</kbd><span class="kbd-sep">/</span><kbd>⌘</kbd><span class="kbd-sep">+</span><kbd>点击</kbd></div>
+              <div class="shortcut-desc">追加 / 取消选中</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>Shift</kbd><span class="kbd-sep">+</span><kbd>点击</kbd></div>
+              <div class="shortcut-desc">范围选中</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>右键</kbd></div>
+              <div class="shortcut-desc">打开操作菜单</div>
+            </div>
           </div>
-        </div>
-        <div class="shortcut-group">
-          <h3>查看器</h3>
+        </section>
+
+        <section class="shortcut-group">
+          <h3 class="shortcut-group-title">查看器</h3>
           <div class="shortcut-list">
-            <div class="shortcut-item"><span>Esc</span><span class="shortcut-key">关闭查看器</span></div>
-            <div class="shortcut-item"><span>← / →</span><span class="shortcut-key">上一张 / 下一张</span></div>
-            <div class="shortcut-item"><span>E / G / F / R / H / I / D</span><span class="shortcut-key">污点 / 居中 / 地平 / RGB / 直方图 / EXIF / 删除</span></div>
-            <div class="shortcut-item"><span>点击按钮</span><span class="shortcut-key">对应功能切换</span></div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>Esc</kbd></div>
+              <div class="shortcut-desc">关闭查看器</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>←</kbd> <kbd>→</kbd></div>
+              <div class="shortcut-desc">上一张 / 下一张</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>E</kbd></div>
+              <div class="shortcut-desc">检查污点（直方图均衡）</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>G</kbd></div>
+              <div class="shortcut-desc">居中网格</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>F</kbd></div>
+              <div class="shortcut-desc">地平线 / 细网格</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>R</kbd></div>
+              <div class="shortcut-desc">RGB 直方图</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>H</kbd></div>
+              <div class="shortcut-desc">亮度直方图</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>I</kbd></div>
+              <div class="shortcut-desc">EXIF 信息面板</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>D</kbd></div>
+              <div class="shortcut-desc">加入待删除 / 取消</div>
+            </div>
+            <div class="shortcut-row">
+              <div class="shortcut-keys"><kbd>F1</kbd></div>
+              <div class="shortcut-desc">打开本面板</div>
+            </div>
           </div>
-        </div>
+        </section>
+
       </div>
     </div>
     <div class="modal-footer">
