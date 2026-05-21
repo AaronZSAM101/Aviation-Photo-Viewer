@@ -26,6 +26,8 @@ rustc-ice-*.txt
 # General
 .DS_Store
 .localized
+deploy/oauth2-proxy.*.env
+!deploy/oauth2-proxy.example.env
 __MACOSX/
 .AppleDouble
 .LSOverride
@@ -83,4 +85,4 @@ Backups.backupdb
 MobileBackups.trash
 tmbootpicker.efi
 
-
+deploy/
