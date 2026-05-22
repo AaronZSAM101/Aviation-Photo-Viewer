@@ -2,7 +2,8 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use axum_server::{tls_rustls::RustlsConfig, Handle};
+use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 
 use photo_viewer::{exif_edit, file_ops, handlers, hash, models::AppState};
@@ -43,6 +44,38 @@ async fn persist_meta_cache_atomic(
     Ok(())
 }
 
+async fn flush_caches_on_shutdown(
+    meta_cache: Arc<RwLock<HashMap<String, photo_viewer::models::CachedMeta>>>,
+    cache_path: PathBuf,
+    exif_overrides: Arc<RwLock<HashMap<String, photo_viewer::models::ExifData>>>,
+    exif_overrides_path: PathBuf,
+) {
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        tracing::warn!("Failed to listen for shutdown signal: {}", e);
+        return;
+    }
+
+    tracing::info!("Shutdown signal received, flushing meta cache...");
+    let snapshot = {
+        let guard = meta_cache.read().await;
+        guard.clone()
+    };
+
+    if let Err(e) = persist_meta_cache_atomic(&cache_path, &snapshot).await {
+        tracing::warn!("Failed to flush meta cache on shutdown: {}", e);
+    }
+
+    let exif_snapshot = {
+        let guard = exif_overrides.read().await;
+        guard.clone()
+    };
+    if let Err(e) =
+        exif_edit::persist_exif_overrides_atomic(&exif_overrides_path, &exif_snapshot).await
+    {
+        tracing::warn!("Failed to flush exif overrides on shutdown: {}", e);
+    }
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
@@ -62,6 +95,15 @@ async fn main() {
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let addr = format!("{}:{}", host, port);
+    let tls_config_paths = match (
+        std::env::var("HTTPS_CERT_PATH").ok(),
+        std::env::var("HTTPS_KEY_PATH").ok(),
+    ) {
+        (Some(cert_path), Some(key_path)) => Some((cert_path, key_path)),
+        (None, None) => None,
+        _ => panic!("HTTPS_CERT_PATH and HTTPS_KEY_PATH must be set together"),
+    };
+    let use_https = tls_config_paths.is_some();
     let read_only = env_flag("READ_ONLY");
 
     if !photos_dir.exists() {
@@ -74,7 +116,11 @@ async fn main() {
 
     tracing::info!("📷  Photo Viewer {}", env!("PHOTO_VIEWER_VERSION"));
     tracing::info!("    Photos → {}", photos_dir.display());
-    tracing::info!("    Listening on http://{}", addr);
+    tracing::info!(
+        "    Listening on {}://{}",
+        if use_https { "https" } else { "http" },
+        addr
+    );
     tracing::info!("    Read-only mode → {}", read_only);
 
     let state = AppState {
@@ -200,45 +246,51 @@ async fn main() {
         .route("/api/admin/set_photos_dir", post(handlers::set_photos_dir))
         .with_state(state.clone());
 
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .expect("Failed to bind");
-
     // 优雅退出时执行最后一次落盘
     let shutdown_meta_cache = state.meta_cache.clone();
     let shutdown_cache_path = cache_file.clone();
     let shutdown_exif_overrides = state.exif_overrides.clone();
     let shutdown_exif_overrides_path = exif_override_file.clone();
     let shutdown = async move {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            tracing::warn!("Failed to listen for shutdown signal: {}", e);
-            return;
-        }
-
-        tracing::info!("Shutdown signal received, flushing meta cache...");
-        let snapshot = {
-            let guard = shutdown_meta_cache.read().await;
-            guard.clone()
-        };
-
-        if let Err(e) = persist_meta_cache_atomic(&shutdown_cache_path, &snapshot).await {
-            tracing::warn!("Failed to flush meta cache on shutdown: {}", e);
-        }
-
-        let exif_snapshot = {
-            let guard = shutdown_exif_overrides.read().await;
-            guard.clone()
-        };
-        if let Err(e) =
-            exif_edit::persist_exif_overrides_atomic(&shutdown_exif_overrides_path, &exif_snapshot)
-                .await
-        {
-            tracing::warn!("Failed to flush exif overrides on shutdown: {}", e);
-        }
+        flush_caches_on_shutdown(
+            shutdown_meta_cache,
+            shutdown_cache_path,
+            shutdown_exif_overrides,
+            shutdown_exif_overrides_path,
+        )
+        .await;
     };
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await
-        .expect("Server error");
+    if use_https {
+        let (cert_path, key_path) = tls_config_paths.expect("TLS paths checked above");
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .expect("Failed to install rustls crypto provider");
+        let socket_addr: SocketAddr = addr.parse().expect("Invalid HOST/PORT address");
+        let tls_config = RustlsConfig::from_pem_file(&cert_path, &key_path)
+            .await
+            .expect("Failed to load HTTPS certificate or key");
+        let handle = Handle::new();
+        let shutdown_handle = handle.clone();
+
+        tokio::spawn(async move {
+            shutdown.await;
+            shutdown_handle.graceful_shutdown(Some(std::time::Duration::from_secs(10)));
+        });
+
+        axum_server::bind_rustls(socket_addr, tls_config)
+            .handle(handle)
+            .serve(app.into_make_service())
+            .await
+            .expect("Server error");
+    } else {
+        let listener = tokio::net::TcpListener::bind(&addr)
+            .await
+            .expect("Failed to bind");
+
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown)
+            .await
+            .expect("Server error");
+    }
 }

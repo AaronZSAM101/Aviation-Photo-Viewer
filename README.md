@@ -49,6 +49,29 @@ podman run --rm \
 | `PORT`        | `3000`     | 监听端口            |
 | `HOST`        | `127.0.0.1` | 监听地址；容器镜像默认设为 `0.0.0.0` |
 | `READ_ONLY`   | `false`    | 只读模式；设为 `true` 时禁用所有写操作 |
+| `HTTPS_CERT_PATH` | 未设置 | HTTPS 证书 PEM 路径；需和 `HTTPS_KEY_PATH` 同时设置 |
+| `HTTPS_KEY_PATH`  | 未设置 | HTTPS 私钥 PEM 路径；需和 `HTTPS_CERT_PATH` 同时设置 |
+
+默认使用 HTTP，本地运行时不需要准备证书。若部署到 NAS 或其他需要 HTTPS 直连访问的环境，同时设置 `HTTPS_CERT_PATH` 与 `HTTPS_KEY_PATH` 后，服务会直接以 HTTPS 启动，并继续使用 `HOST` / `PORT` 指定的监听地址与端口。只设置其中一个变量时程序会拒绝启动，避免误以为已经启用 HTTPS。
+
+本地自签名证书示例：
+
+```bash
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout localhost-key.pem \
+  -out localhost-cert.pem \
+  -days 365 \
+  -subj "/CN=localhost" \
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+
+HTTPS_CERT_PATH=./localhost-cert.pem \
+HTTPS_KEY_PATH=./localhost-key.pem \
+PHOTOS_DIR=/path/to/photos \
+PORT=3443 \
+cargo run --release
+```
+
+浏览器打开 <https://localhost:3443> 即可。自签名证书会触发浏览器安全提示；NAS 上建议使用可信 CA 签发的证书，或继续由 Caddy / Nginx / oauth2-proxy 等反向代理统一终止 TLS。
 
 > 公网部署时不要直接暴露 photo-viewer 端口。建议让 photo-viewer 只在容器网络内监听，再通过认证反向代理访问。
 
