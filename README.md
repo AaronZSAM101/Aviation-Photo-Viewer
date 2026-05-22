@@ -1,58 +1,445 @@
-# Photo Viewer
+# Aviation-Photo-Viewer
 
-该项目是使用 Rust + Axum 写的轻量航空照片浏览器。支持 EXIF 读取、缩略图与预览图生成、按拍摄日期排序、文件操作（删除/移动/复制/重命名）、感知哈希对比。前端单页应用编译进二进制，部署只需要一个容器。
+Aviation-Photo-Viewer 是一个轻量的照片浏览和管理工具，并且对于航空摄影师提供了一些客制化的服务。
 
-- 后端：Axum + Tokio + Rayon
-- 前端：原生 JS（虚拟滚动 + 智能加载队列）
-- 部署：Podman / Docker / 直接二进制
+本项目将后端、前端和静态资源打包成一个程序或一个容器，适合在本机、NAS、家庭服务器上浏览大量照片。
 
----
+
+
 
 ## 目录
 
-- [快速开始](#快速开始)
-- [环境变量](#环境变量)
-- [API 端点](#api-端点)
-- [支持的图片格式](#支持的图片格式)
-- [项目架构](#项目架构)
-- [性能优化](#性能优化)
-- [Podman 部署](#podman-部署)
-- [开发与构建](#开发与构建)
+- [它能做什么](#它能做什么)
+- [先选一种部署方式](#先选一种部署方式)
+- [本地直接运行](#本地直接运行)
+- [Podman / Docker 运行](#podman--docker-运行)
+- [群晖 NAS 部署](#群晖-nas-部署)
+- [环境变量说明](#环境变量说明)
+- [HTTPS 和公网访问](#https-和公网访问)
+- [常见问题](#常见问题)
+- [开发者附录](#开发者附录)
 
----
 
-## 快速开始
-建议本地用户使用 [Podman](https://podman.io/) 进行部署。
-PHOTOS_DIR=/Users/aaronliu/Library/CloudStorage/SynologyDrive-MBA-Aaron/Photos/Aviation PORT=3002 ./target/release/photo-viewer
+
+## 它能做什么
+
+目前已有功能可以分成几个大模块：
+
+### 照片浏览和检索
+
+- 支持 JPG / PNG / WebP / TIFF 格式，未来可能会支持读取 RAW 格式照片。
+- 自动生成缩略图和预览图，打开大量照片时更快。
+- 支持按拍摄时间、文件夹、文件名、文件大小等方式查看和排序。
+- 支持按年、月、日的时间尺度分组，适合浏览长期积累的照片。
+- 支持按文件夹分组，适合已经在硬盘或 NAS 上整理好目录的照片库。
+- 支持搜索照片文件名和路径。
+
+### 大图查看和辅助分析
+
+- 打开照片大图查看器，支持键盘左右切换。
+- 显示 EXIF 信息，例如拍摄时间、相机、镜头、焦距、ISO、快门、光圈、GPS 等。
+- 支持直方图、RGB 辅助查看、构图网格等查看工具。
+- 支持 SHA256 和感知哈希对比，用来辅助发现重复或相似照片。
+
+### 照片管理
+
+- 支持多选照片。
+- 支持暂存并批量执行文件操作：删除、移动、复制、重命名、恢复。
+- 支持回收站式删除，降低误删风险。
+- 支持手动编辑部分 EXIF 覆盖信息。
+- 支持只读模式，只浏览不允许改文件。
+
+### 部署和访问
+
+- 支持本地运行，也支持 Podman / Docker / 群晖 NAS 部署。
+- 支持 HTTP，本地使用不需要证书。
+- 支持配置证书后直接启用 HTTPS。
+- 推荐在群晖或公网环境中使用反向代理和 HTTPS 证书。
+
+目前还没有内置账号系统。放到公网前，请务必使用群晖反向代理、oauth2-proxy、Authentik、Caddy、Nginx 等方式加认证。
+
+
+
+## 先选一种部署方式
+
+如果你只是自己电脑上用：
+
+- 推荐：本地直接运行或 Podman / Docker。
+- 不需要证书，浏览器打开 `http://localhost:3000`。
+
+如果你在群晖 NAS 上用：
+
+- 推荐：Container Manager 创建容器，DSM 反向代理负责 HTTPS 证书。
+- 可以直接使用 GitHub Packages 中已经构建好的镜像，不需要在 NAS 上自己编译。
+- photo-viewer 容器内部继续跑 HTTP，这样证书续期最省心。
+- 群晖用户请选择 `amd64` / `linux/amd64` 镜像。
+
+如果你熟悉 YAML：
+
+- Podman 可以用 `photo-viewer-pod.yaml` 创建 Pod。
+- 也可以直接用镜像创建容器并挂载照片目录。
+- Podman Desktop、Docker Desktop、群晖 Container Manager 都有图形界面，可以不用手敲完整命令。
+
+
+
+## 本地直接运行
+
+适合已经拿到二进制文件，或者自己会 `cargo build` 的用户。
+
 ```bash
-# 1. 构建镜像
-podman build -t photo-viewer .
-
-# 2. 只读挂载照片目录并运行
-podman run --rm \
-  -v /你的照片目录:/photos:ro \
-  -p 3000:3000 \
-  photo-viewer
+PHOTOS_DIR=/你的照片目录 PORT=3000 ./photo-viewer
 ```
 
-浏览器打开 <http://localhost:3000> 即可。
+然后打开：
 
-第一次构建需要拉 Rust 工具链与依赖，约 3–5 分钟；之后只改代码的增量构建几秒就能完成（依赖层会被缓存）。
+```text
+http://localhost:3000
+```
 
----
+本地运行默认是 HTTP，不需要证书。
 
-## 环境变量
 
-| 变量          | 默认值     | 说明                |
-|---------------|------------|---------------------|
-| `PHOTOS_DIR`  | `/photos`  | 容器内照片目录路径  |
-| `PORT`        | `3000`     | 监听端口            |
-| `HOST`        | `127.0.0.1` | 监听地址；容器镜像默认设为 `0.0.0.0` |
-| `READ_ONLY`   | `false`    | 只读模式；设为 `true` 时禁用所有写操作 |
-| `HTTPS_CERT_PATH` | 未设置 | HTTPS 证书 PEM 路径；需和 `HTTPS_KEY_PATH` 同时设置 |
-| `HTTPS_KEY_PATH`  | 未设置 | HTTPS 私钥 PEM 路径；需和 `HTTPS_CERT_PATH` 同时设置 |
 
-默认使用 HTTP，本地运行时不需要准备证书。若部署到 NAS 或其他需要 HTTPS 直连访问的环境，同时设置 `HTTPS_CERT_PATH` 与 `HTTPS_KEY_PATH` 后，服务会直接以 HTTPS 启动，并继续使用 `HOST` / `PORT` 指定的监听地址与端口。只设置其中一个变量时程序会拒绝启动，避免误以为已经启用 HTTPS。
+## Podman / Docker 运行
+
+下面命令里的 `podman` 可以换成 `docker`。
+
+### 方式一：直接用镜像运行
+
+项目已经在 GitHub Packages 中生成容器镜像：
+
+```text
+ghcr.io/aaronzsam101/aviation-photo-viewer:latest
+```
+
+镜像页面：[AaronZSAM101/Aviation-Photo-Viewer](https://github.com/AaronZSAM101/Aviation-Photo-Viewer/pkgs/container/aviation-photo-viewer)
+
+镜像里默认监听容器内 `80` 端口，所以最简单的端口映射是 `3000:80`。
+
+只浏览，不允许改照片：
+
+```bash
+podman run -d \
+  --name photo-viewer \
+  --restart unless-stopped \
+  -p 3000:80 \
+  -v /你的照片目录:/photos:ro \
+  -e PHOTOS_DIR=/photos \
+  -e READ_ONLY=true \
+  ghcr.io/aaronzsam101/aviation-photo-viewer:latest
+```
+
+允许在网页里删除、移动、复制、重命名：
+
+```bash
+podman run -d \
+  --name photo-viewer \
+  --restart unless-stopped \
+  -p 3000:80 \
+  -v /你的照片目录:/photos \
+  -e PHOTOS_DIR=/photos \
+  -e READ_ONLY=false \
+  ghcr.io/aaronzsam101/aviation-photo-viewer:latest
+```
+
+打开：
+
+```text
+http://localhost:3000
+```
+
+这里有两个“只读”概念，容易混：
+
+- `READ_ONLY=true`：photo-viewer 自己的只读模式。前端会隐藏管理按钮，后端也会拒绝写操作。
+- 挂载里的 `:ro`：容器层面的文件只读。即使 `READ_ONLY=false`，只要挂载是 `:ro`，容器也改不了照片。
+
+想管理照片时，两边都要允许：
+
+- `READ_ONLY=false`
+- 挂载不要加 `:ro`
+
+### 方式二：用 Pod / Kubernetes YAML
+
+仓库里有一个示例文件：`photo-viewer-pod.yaml`。
+
+使用前先改两处：
+
+- `hostPath.path`：改成你的照片目录。
+- `READ_ONLY`：只浏览用 `"true"`，需要管理照片用 `"false"`。
+
+示例 YAML 默认使用 GitHub Packages 镜像：
+
+```text
+ghcr.io/aaronzsam101/aviation-photo-viewer:latest
+```
+
+如果你 clone 代码后自己修改并重新构建镜像，需要把 `photo-viewer-pod.yaml` 里的 `image` 改成你自己构建出来的镜像名。例如：
+
+```yaml
+image: localhost/photo-viewer:latest
+```
+
+或者：
+
+```yaml
+image: photo-viewer:latest
+```
+
+启动：
+
+```bash
+podman play kube photo-viewer-pod.yaml
+```
+
+查看状态：
+
+```bash
+podman pod ps
+podman ps --pod
+```
+
+看日志：
+
+```bash
+podman logs photo-viewer-pod-photo-viewer
+```
+
+停止并移除：
+
+```bash
+podman play kube --down photo-viewer-pod.yaml
+```
+
+Podman Desktop 也可以通过图形界面导入或创建 Pod。命令行不是必须的。
+
+### 方式三：用图形界面创建容器
+
+在 Podman Desktop、Docker Desktop 或群晖 Container Manager 中，核心配置都一样：
+
+镜像：
+
+```text
+ghcr.io/aaronzsam101/aviation-photo-viewer:latest
+```
+
+如果界面让你选择平台或架构，群晖用户请选择：
+
+```text
+linux/amd64
+```
+
+端口：
+
+```text
+宿主机 3000 -> 容器 80
+```
+
+卷挂载：
+
+```text
+/你的照片目录 -> /photos
+```
+
+环境变量：
+
+```text
+PHOTOS_DIR=/photos
+READ_ONLY=true 或 false
+```
+
+如果图形界面要求填写容器端口，请填 `80`，除非你额外设置了 `PORT=3000`。
+
+
+
+## 群晖 NAS 部署
+
+特别提醒：群晖用户按 `amd64` / `linux/amd64` 镜像部署。Container Manager 如果出现平台或架构选项，请选 `linux/amd64`。
+
+推荐路线：
+
+```text
+浏览器 HTTPS
+  -> 群晖 DSM 反向代理 / 证书
+  -> photo-viewer 容器 HTTP
+  -> /photos 照片目录
+```
+
+这样 photo-viewer 不需要自己管理证书，群晖负责 HTTPS 和证书续期。
+
+### 1. 准备照片共享文件夹
+
+在群晖上，建议把照片放在真正的共享文件夹里，例如：
+
+```text
+/volume1/photo
+/volume1/Aviation
+/volume1/docker/photo-viewer/photos
+```
+
+注意：
+
+- Container Manager 挂载的目录需要是容器能访问的共享文件夹。
+- 不建议挂一个软链接目录。容器里看到软链接后，软链接指向的真实位置未必也被挂进去了，容易出现“能看到名字但打不开文件”。
+- 排查真实路径时，不要只看 `ls -l` 的软链接结果；用 `mount` 看实际挂载点和共享文件夹位置更可靠。
+
+### 2. 用 Container Manager 创建容器
+
+在 Container Manager 里创建容器时，填这些配置。
+
+镜像：
+
+```text
+ghcr.io/aaronzsam101/aviation-photo-viewer:latest
+```
+
+端口：
+
+```text
+本地端口 3000 -> 容器端口 80
+```
+
+卷：
+
+```text
+/volume1/你的照片共享文件夹 -> /photos
+```
+
+环境变量：
+
+```text
+PHOTOS_DIR=/photos
+READ_ONLY=false
+```
+
+如果只想浏览，不想在网页里出现删除、移动、重命名这些功能：
+
+```text
+READ_ONLY=true
+```
+
+### 3. 确认群晖挂载权限
+
+这里也有两个“只读”概念：
+
+- photo-viewer 的 `READ_ONLY` 控制网页里的增删改功能。
+- 群晖 Container Manager 的卷权限控制容器是否真的能改文件。
+
+如果群晖里把卷挂成只读，那么即使 `READ_ONLY=false`，网页上点删除、移动、重命名也会失败，因为容器没有写权限。
+
+想允许管理照片时：
+
+- `READ_ONLY=false`
+- Container Manager 的 `/photos` 卷不要选只读
+- 群晖共享文件夹权限也要允许容器运行用户读写
+
+想只浏览时：
+
+- `READ_ONLY=true`
+- 群晖卷可以设为只读，这样更保险
+
+### 4. 配置 HTTPS
+
+推荐用 DSM 反向代理：
+
+1. `控制面板 -> 安全性 -> 证书`，申请或导入证书。
+2. `控制面板 -> 登录门户 -> 高级 -> 反向代理服务器`，新增规则。
+
+来源：
+
+```text
+协议: HTTPS
+主机名: photo.yourdomain.com
+端口: 443
+```
+
+目标：
+
+```text
+协议: HTTP
+主机名: 127.0.0.1
+端口: 3000
+```
+
+然后在证书设置里，把 `photo.yourdomain.com` 绑定到对应证书。
+
+访问：
+
+```text
+https://photo.yourdomain.com
+```
+
+### 5. 如果想让容器自己启 HTTPS
+
+不推荐作为首选，但支持。
+
+把证书和私钥放到群晖目录，例如：
+
+```text
+/volume1/docker/photo-viewer/certs/fullchain.pem
+/volume1/docker/photo-viewer/certs/privkey.pem
+```
+
+额外挂载：
+
+```text
+/volume1/docker/photo-viewer/certs -> /certs:ro
+```
+
+环境变量：
+
+```text
+PHOTOS_DIR=/photos
+HOST=0.0.0.0
+PORT=3443
+HTTPS_CERT_PATH=/certs/fullchain.pem
+HTTPS_KEY_PATH=/certs/privkey.pem
+READ_ONLY=false
+```
+
+端口：
+
+```text
+本地端口 3443 -> 容器端口 3443
+```
+
+访问：
+
+```text
+https://你的NAS地址:3443
+```
+
+
+
+## 环境变量说明
+
+| 变量 | 默认值 | 说明 |
+---|---|---
+| `PHOTOS_DIR` | `/photos` | 容器或程序内部看到的照片目录 |
+| `PORT` | 本地程序默认 `3000`，镜像默认 `80` | 服务监听端口 |
+| `HOST` | 本地程序默认 `127.0.0.1`，镜像默认 `0.0.0.0` | 服务监听地址 |
+| `READ_ONLY` | `false` | photo-viewer 只读模式，设为 `true` 后禁用写操作 |
+| `HTTPS_CERT_PATH` | 未设置 | HTTPS 证书 PEM 路径 |
+| `HTTPS_KEY_PATH` | 未设置 | HTTPS 私钥 PEM 路径 |
+
+`HTTPS_CERT_PATH` 和 `HTTPS_KEY_PATH` 必须同时设置。只设置其中一个时，程序会拒绝启动，避免你误以为已经启用 HTTPS。
+
+
+
+## HTTPS 和公网访问
+
+本地使用不需要 HTTPS：
+
+```text
+http://localhost:3000
+```
+
+NAS 或公网建议使用 HTTPS。推荐优先级：
+
+1. 群晖 DSM 反向代理管理 HTTPS 证书。
+2. Caddy / Nginx / oauth2-proxy 管理 HTTPS 和认证。
+3. photo-viewer 自己读取证书启 HTTPS。
+
+本项目目前没有内置登录系统，因此，只要能访问网页的人，就能浏览照片；如果 `READ_ONLY=false` 且文件挂载可写，还能管理照片。所以公网使用时请务必加认证。
 
 本地自签名证书示例：
 
@@ -71,426 +458,164 @@ PORT=3443 \
 cargo run --release
 ```
 
-浏览器打开 <https://localhost:3443> 即可。自签名证书会触发浏览器安全提示；NAS 上建议使用可信 CA 签发的证书，或继续由 Caddy / Nginx / oauth2-proxy 等反向代理统一终止 TLS。
-
-> 公网部署时不要直接暴露 photo-viewer 端口。建议让 photo-viewer 只在容器网络内监听，再通过认证反向代理访问。
-
----
-
-## 公网安全部署
-
-本项目没有内置账号系统。若端口直接暴露到公网，知道链接的人可以查看照片，并在非只读模式下执行移动、删除、重命名、EXIF 编辑等操作。
-
-推荐使用 **Authentik OpenID Connect + oauth2-proxy** 作为公网入口：
+打开：
 
 ```text
-Internet
-  -> yushen.online:39777
-  -> oauth2-proxy :4180
-  -> photo-viewer :80
+https://localhost:3443
 ```
 
-Authentik / OpenID 应用配置：
+自签名证书会触发浏览器安全提示。NAS 上建议使用可信 CA 签发的证书，或者让 DSM 反向代理处理证书。
 
-| 字段 | 示例 |
-|------|------|
-| Provider | OpenID Connect / OAuth2 |
-| Issuer / Discovery | `https://auth.sparrowhe.top/application/o/photo-viewer/.well-known/openid-configuration` |
-| Redirect URI（本地） | `http://localhost:3000/oauth2/callback` |
-| Redirect URI（生产） | `http://yushen.online:39777/oauth2/callback` |
 
-仓库内已提供 oauth2-proxy 配置：
 
-```bash
-deploy/oauth2-proxy.cfg         # 通用 OIDC 配置，不放 secret
-deploy/oauth2-proxy.local.env   # 本地 localhost:3000 调试
-deploy/oauth2-proxy.prod.env    # 群晖 / yushen.online:39777
-```
+## 常见问题
 
-群晖 Container Manager 推荐使用 Compose 项目：
+**Q：网页能打开，但看不到照片？**  
+A：先检查 `PHOTOS_DIR` 是否是 `/photos`，再检查宿主机照片目录是否正确挂载到了容器的 `/photos`。
 
-```bash
-deploy/docker-compose.synology.yml
-```
+**Q：在群晖上挂载软链接目录，为什么读不到照片？**  
+A：容器只看得到你挂进去的目录。软链接指向的真实目录如果没有被挂进容器，文件就会打不开。请挂真实共享文件夹，排查时用 `mount` 看真实挂载点。
 
-photo-viewer 公网环境变量：
+**Q：我设置了 `READ_ONLY=false`，为什么还是删不掉或移动不了？**  
+A：`READ_ONLY=false` 只是允许 photo-viewer 发起写操作。群晖或 Docker 的卷如果是只读，或者共享文件夹权限不允许写，操作仍然会失败。
 
-```bash
-HOST=0.0.0.0
-READ_ONLY=false
-```
+**Q：我只是想安全浏览照片，应该怎么设？**  
+A：设置 `READ_ONLY=true`，并把照片目录用只读方式挂载，例如 `/photos:ro`。这样前端隐藏管理入口，容器层也不能改文件。
 
-`READ_ONLY=false` 允许登录用户管理照片，包括移动、删除、重命名和 EXIF 编辑。若只想开放浏览，把它改成 `READ_ONLY=true`，后端会拒绝写接口，前端也会隐藏管理按钮。
+**Q：换端口怎么做？**  
+A：如果用镜像默认配置，容器端口是 `80`，改宿主机端口即可，例如 `8080:80`。如果你设置了 `PORT=3000`，就要映射到容器端口 `3000`。
 
----
+**Q：HEIC 支持吗？**  
+A：暂不支持。当前支持 JPG、PNG、WebP、TIFF。
 
-## API 端点
+**Q：能直接暴露到公网吗？**  
+A：不建议。项目没有内置账号系统，请放在 DSM 反向代理、oauth2-proxy、Authentik、Caddy、Nginx 等认证入口后面。
 
-| 路由                          | 说明                                          |
-|-------------------------------|-----------------------------------------------|
-| `GET /`                       | 前端页面                                      |
-| `GET /view/:path`             | 前端页面的可刷新查看器路由                   |
-| `GET /api/photos?sort=`       | 照片列表 JSON（含 EXIF）                      |
-| `GET /photos/:path`           | 原图                                          |
-| `GET /thumb/:path`            | 缩略图（400px，内存缓存）                     |
-| `GET /preview/:path`          | 预览图（≤2400px，内存缓存）                   |
-| `POST /api/stage`             | 暂存文件操作                                  |
-| `POST /api/stage/apply`       | 应用暂存的操作                                |
-| `GET /api/hash/:path`         | 计算照片 SHA256                               |
-| `GET /api/compare?a=&b=`      | 对比两张照片（感知哈希）                      |
 
-`sort` 可选值：`date-asc` / `date-desc` / `name-asc` / `name-desc` / `size-desc`
 
-查看器路由会把当前状态写入 URL 查询参数：`sort`、`view`、`scale`、`q`、`collapse`。
+## 开发者附录
 
----
-
-## 支持的图片格式
+### 支持的图片格式
 
 JPG · PNG · WebP · TIFF
 
-HEIC 暂不支持，需要额外的 C 库依赖。
+### API 端点
 
----
+| 路由 | 说明 |
+---|---
+| `GET /` | 前端页面 |
+| `GET /view/:path` | 可刷新查看器路由 |
+| `GET /api/config` | 前端配置 |
+| `GET /api/photos?sort=` | 照片列表 JSON |
+| `GET /photos/:path` | 原图 |
+| `GET /thumb/:path` | 缩略图 |
+| `GET /preview/:path` | 预览图 |
+| `POST /api/stage` | 暂存文件操作 |
+| `POST /api/stage/apply` | 应用暂存操作 |
+| `GET /api/trash/list` | 回收站列表 |
+| `GET /api/hash/:path` | 计算 SHA256 和感知哈希 |
+| `GET /api/compare?a=&b=` | 对比两张照片 |
+| `POST /api/exif/update` | 保存手动 EXIF 覆盖值 |
 
-## 项目架构
+`sort` 可选值：
 
-代码前后端均采用模块化设计。后端 8 个 Rust 模块约 1000 行，前端 9 个 ES Module 约 1400 行（含 CSS）。
-
-### 后端（Rust）
-
-```
-src/
-├── lib.rs          (8 行)    库入口，导出公共接口
-├── main.rs         (66 行)   应用启动、路由注册
-├── models.rs       (89 行)   数据类型（AppState、ExifData、PhotoMeta、OpKind…）
-├── exif.rs         (165 行)  EXIF 元数据提取与解析
-├── handlers.rs     (~290 行) HTTP 请求处理 + 静态资源 (rust-embed)
-├── file_ops.rs     (270 行)  文件操作、暂存队列、垃圾回收（.trash）
-├── hash.rs         (84 行)   SHA256 + 感知哈希（aHash），照片对比
-└── utils.rs        (24 行)   工具函数（路径安全检查、ahash 算法）
-```
-
-| 模块 | 职责 |
-|------|------|
-| `models` | 全局状态与数据类型定义 |
-| `exif` | `extract_exif()`、`date_to_sort_key()`、GPS 坐标转换、有理数处理 |
-| `handlers` | 路由处理函数（图片列表/缩略图/预览/前端入口/`/static/*` 静态资源） |
-| `file_ops` | 文件删除/移动/复制/重命名，操作队列与 `.trash` 目录 |
-| `hash` | 文件 SHA256 与感知哈希，重复照片检测 |
-| `utils` | `safe_subpath()` 路径校验、`compute_ahash()` |
-
-### 前端（静态资源全部嵌入二进制）
-
-整个 `static/` 目录通过 [`rust-embed`](https://crates.io/crates/rust-embed) 在编译期打包进可执行文件，运行时不需要任何外部资源文件。
-
-```
-static/
-├── index.html              (233 行)  纯 DOM 模板，无内联 JS / CSS
-├── css/
-│   └── styles.css          (184 行)  全部样式
-└── js/                                ES Modules（type="module"）
-    ├── main.js             (6 行)    入口
-    ├── state.js            (125 行)  state 对象 + DOM 引用 + ImageLoader
-    ├── utils.js            (63 行)   纯函数：fmt_*, subpath, thumbUrl…
-    ├── selection.js        (63 行)   选择逻辑
-    ├── api.js              (156 行)  所有 fetch（照片/暂存/回收站）
-    ├── render.js           (364 行)  网格渲染 + 搜索 + 虚拟滚动
-    ├── viewer.js           (281 行)  全屏查看器 + 直方图 + 网格 overlay
-    ├── file-ops.js         (96 行)   文件操作 modal（rename/move/copy）
-    └── events.js           (257 行)  事件绑定 + 键盘快捷键 + 右键菜单
+```text
+date-asc / date-desc / name-asc / name-desc / size-desc
 ```
 
-| 模块 | 职责 |
-|------|------|
-| `state` | 全局可变状态 `state` 对象、所有 `getElementById` 引用、`ImageLoader` 单例 |
-| `utils` | 纯函数：格式化、路径与 URL、`hasAnyExif` 等，无副作用 |
-| `selection` | 卡片多选（含 Shift 范围选 / Cmd 追加选） |
-| `api` | 所有 `fetch` 调用、`closeModal` |
-| `render` | 主渲染入口、按文件夹/时间分组、虚拟滚动、暂存徽标 |
-| `viewer` | 查看器开关与导航、EXIF 面板、污点检查、RGB/直方图、网格对齐 |
-| `file-ops` | 文件操作 modal（rename / move / copy）的状态机与提交 |
-| `events` | 把上面所有模块的功能挂到 DOM 事件上 |
-| `main` | 入口：调用 `bindAllEvents()` + `loadPhotos()` |
+查看器路由会把当前状态写入 URL 查询参数，例如 `sort`、`view`、`scale`、`q`、`collapse`。
 
-### 关键设计
-
-**缓存策略** — 图片列表请求时扫描文件系统，按 `mtime` + `size` 命中 EXIF 缓存；缩略图与预览图均常驻内存缓存。
-
-**路径安全** — 所有文件操作经 `safe_subpath()` 校验，杜绝 `../` 目录遍历攻击。
-
-**并行处理** — 文件 I/O 跑在 blocking pool（避免阻塞 tokio 调度）；EXIF 提取通过 `rayon` 并行。
-
-**前端模块化** — 用单一 `state` 对象集中可变状态，所有跨模块共享通过对象属性读写，避免 `export let` + setter 的繁琐写法。模块间存在循环依赖（render ↔ viewer，api → render → viewer → api），但所有跨模块调用都发生在事件回调里，ES Module live bindings 能正确处理。
-
-**静态资源嵌入** — 用 `rust-embed` 把 `static/` 整个目录在编译期打包进二进制，运行时通过 `/static/*path` 路由提供。新增 CSS / JS / 字体文件不需要改 Rust 代码。
-
----
-
-## 性能优化
-
-通过 **虚拟滚动 + 智能图片加载队列 + 搜索索引**，前端能稳定承载 50K+ 张图片。
-
-### 性能指标对比
-
-| 指标 | 优化前 | 优化后 | 提升 |
-|------|-------|--------|------|
-| 首屏加载（1000 张） | 3–5 秒 | 200–500 ms | 6–10× |
-| 内存占用（1000 张） | ~200 MB | ~50 MB | 4× |
-| 滚动帧率 | 15–30 fps（卡顿）| 55–60 fps（流畅）| 2–4× |
-| 搜索延迟 | 100–200 ms | 10–30 ms | 3–10× |
-| 最大支持图片数 | ~5K | **50K+** | 10× |
-
-### 三项核心优化
-
-**1. 虚拟滚动（Intersection Observer）** — 只渲染视口内的 DOM 元素，进入视口的图片才触发加载（`rootMargin: '300px'` 提前 300px 加载）。DOM 节点减少 90%+。
-
-**2. 智能图片加载队列（ImageLoader）** — 限制并发加载数量（默认 6），避免浏览器资源耗尽。并发数 = 6 在大多数环境下是 CPU 占用与速度的最佳平衡点。
-
-```javascript
-class ImageLoader {
-  constructor(maxConcurrent = 6) { /* ... */ }
-  load(img) { this.queue.push(img); this.processQueue(); }
-  processQueue() {
-    while (this.loading < this.maxConcurrent && this.queue.length > 0) {
-      const img = this.queue.shift();
-      this.loading++;
-      img.onload = img.onerror = () => { this.loading--; this.processQueue(); };
-      img.src = img.dataset.src;
-    }
-  }
-}
-```
-
-**3. 搜索索引** — 预构建 Map 索引，把 O(n) 的全表扫描降为 O(1) 查表，并缓存上一次搜索词避免重复计算。10K 张图片搜索从 100 ms 降到 5 ms。
-
-### 推荐配置
-
-```javascript
-maxConcurrent = 6;     // 并发加载数
-rootMargin = '300px';  // 预加载距离
-```
-
-低端设备可降到 3，高端设备可提到 8–12。
-
-### 后续可选优化
-
-- 后端分页 API（`/api/photos?limit=100&offset=0`，`models.rs` 中已预留 `PhotosQuery` / `PagedPhotos` 结构）
-- HTTP 缓存头（`Cache-Control: public, max-age=86400`）
-- Service Worker 离线缓存
-- IndexedDB 元数据缓存
-- WebP 转码 + Brotli 压缩
-
----
-
-## Podman 部署
-
-本项目以 Podman 为主推部署方式（也完全兼容 Docker，把命令里的 `podman` 替换成 `docker` 即可）。提供两种方式：**直接 `podman run`** 和 **Pod / Kubernetes YAML**。Yaml为本项目主推方式。
-
-### 方式一：直接 `podman run`
-
-适合最简单的本地使用场景。
+### 本地开发
 
 ```bash
-# 构建镜像
+cargo check
+cargo build
+PHOTOS_DIR=/path/to/photos PORT=3000 cargo run
+```
+
+构建 release：
+
+```bash
+cargo build --release
+PHOTOS_DIR=/path/to/photos PORT=3000 ./target/release/photo-viewer
+```
+
+### 构建镜像
+
+```bash
 podman build -t photo-viewer .
-
-# 运行（前台）
-podman run --rm \
-  -v /你的照片目录:/photos:ro \
-  -p 3000:3000 \
-  photo-viewer
-
-# 运行（后台 + 命名 + 自启）
-podman run -d \
-  --name photo-viewer \
-  --restart unless-stopped \
-  -v /你的照片目录:/photos:ro \
-  -p 3000:3000 \
-  photo-viewer
 ```
 
-常用管理命令：
+Docker 用户：
 
 ```bash
-podman logs -f photo-viewer          # 看日志
-podman stop photo-viewer             # 停止
-podman start photo-viewer            # 启动
-podman rm -f photo-viewer            # 删除容器
-podman image prune                   # 清理无用镜像
-```
-
-> **macOS 提示**：Podman 在 macOS 上跑在轻量虚拟机里。把宿主机目录挂进容器前，先确认这个目录已经被 podman machine 共享：
->
-> ```bash
-> podman machine stop
-> podman machine set --rootful=false --volume /Users/你的用户名/Pictures
-> podman machine start
-> ```
-
-### 方式二：Pod / Kubernetes YAML
-
-仓库内已提供 `photo-viewer-pod.yaml`，Podman 原生支持 Kubernetes Pod 规范，直接 `play kube` 即可。
-
-```yaml
-apiVersion: v1
-kind: Pod
-metadata:
-  name: photo-viewer-pod
-spec:
-  containers:
-    - name: photo-viewer
-      image: localhost/photo-viewer:latest
-      ports:
-        - containerPort: 3000
-          hostPort: 3000
-      env:
-        - name: PHOTOS_DIR
-          value: /photos
-        - name: PORT
-          value: "3000"
-      volumeMounts:
-        - name: photos-volume
-          mountPath: /photos
-
-  volumes:
-    - name: photos-volume
-      hostPath:
-        path: /Users/aaronliu/Library/CloudStorage/SynologyDrive-MBA-Aaron/Photos/Aviation
-```
-
-把 `volumes.hostPath.path` 改成你自己的照片目录后，使用：
-
-```bash
-# 启动 pod
-podman play kube photo-viewer-pod.yaml
-
-# 查看状态
-podman pod ps
-podman ps --pod
-
-# 查看日志
-podman logs photo-viewer-pod-photo-viewer
-
-# 停止 / 移除
-podman play kube --down photo-viewer-pod.yaml
-```
-
-### 方式三：systemd 自启（Linux 服务器）
-
-```bash
-# 生成 systemd unit 文件（用户态）
-mkdir -p ~/.config/systemd/user
-podman generate systemd --new --files --name photo-viewer \
-  --restart-policy=always
-
-mv container-photo-viewer.service ~/.config/systemd/user/
-
-# 启用并启动
-systemctl --user daemon-reload
-systemctl --user enable --now container-photo-viewer.service
-
-# 让服务在用户未登录时也能运行
-loginctl enable-linger $USER
+docker build -t photo-viewer .
 ```
 
 ### Containerfile 说明
 
-镜像采用两阶段构建（多阶段构建），最终运行镜像基于 `debian:bookworm-slim`，体积小：
+镜像是多阶段构建：
 
-- **Stage 1（builder）**：基于 `rust:1.91-slim-trixie`，先把 `Cargo.toml` / `Cargo.lock` 拷进去构建空 stub 来缓存依赖层，再拷源码做真正的 release 构建。这样只改代码时不会重拉所有依赖。
-- **Stage 2（runtime）**：只装 `ca-certificates`，把构建产物 `photo-viewer` 拷进去，暴露 3000 端口，挂载点 `/photos`。
+- builder 阶段基于 Rust 镜像编译程序。
+- runtime 阶段基于 `debian:bookworm-slim`，只放运行所需文件。
+- 静态前端资源会编译进二进制，运行时不需要单独挂载 `static/`。
 
-镜像默认环境变量：`PHOTOS_DIR=/photos`、`PORT=3000`。
+镜像默认值：
 
-### 常见问题
-
-**Q：照片目录权限不对，容器读不到？**
-A：加 `:ro,Z`（SELinux 系统）或确认宿主机文件可读：`chmod -R a+rX /你的照片目录`。
-
-**Q：换端口？**
-A：`-p 8080:3000` 或在 YAML 里改 `hostPort`。容器内端口也想改的话同步改 `PORT` 环境变量。
-
-**Q：rootless Podman 挂载报权限错误？**
-A：rootless 模式下使用 `--userns=keep-id` 让容器内 UID 与宿主一致；或用 `:U` 标志让 Podman 自动 chown 卷。
-
----
-
-## 开发与构建
-
-### 本地开发（无容器）
-
-```bash
-# 编译检查
-cargo check
-cargo clippy
-
-# 运行（指定照片目录与端口）
-PHOTOS_DIR=/path/to/photos PORT=3000 cargo run --release
+```text
+PHOTOS_DIR=/photos
+PORT=80
+HOST=0.0.0.0
+READ_ONLY=false
 ```
 
-### 构建产物
+### 项目结构
 
-```bash
-cargo build --release
-./target/release/photo-viewer
-```
-
-`Cargo.toml` 中的 release profile 已开启：
-
-```toml
-[profile.release]
-opt-level = 3
-lto       = true
-strip     = true
-```
-
-### 验证 API
-
-```bash
-curl http://localhost:3000/api/photos
-curl http://localhost:3000/thumb/example.jpg -o thumb.jpg
-```
-
-### 模块导入示例（如果你想把它当库用）
-
-```rust
-use photo_viewer::models::{AppState, PhotoMeta};
-use photo_viewer::exif::extract_exif;
-use photo_viewer::handlers;
-use photo_viewer::hash;
-```
-
-### 依赖
-
-axum 0.7 · tokio 1 · tower-http 0.5 · image 0.24 · kamadak-exif 0.6 · sha2 0.10 · img_hash 2.0 · rayon 1.7
-
-### 后续可做的事
-
-- 单元测试（`#[cfg(test)]`，路径校验、EXIF 解析等都很容易测）
-- 持久化缓存（SQLite 或 RocksDB）
-- EXIF 字段全文搜索
-- 性能监控与结构化日志
-- 前端错误处理改进
-
----
-
-## 目录结构
-
-```
+```text
 photo-viewer/
-├── Containerfile           # 多阶段构建
+├── Containerfile
 ├── Cargo.toml
-├── photo-viewer-pod.yaml   # Pod / k8s 部署清单
+├── Cargo.lock
+├── photo-viewer-pod.yaml
 ├── src/
-│   ├── lib.rs
 │   ├── main.rs
+│   ├── lib.rs
 │   ├── models.rs
-│   ├── exif.rs
 │   ├── handlers.rs
 │   ├── file_ops.rs
+│   ├── exif.rs
+│   ├── exif_edit.rs
 │   ├── hash.rs
 │   └── utils.rs
 └── static/
-    └── index.html          # 前端（编译进二进制）
+    ├── index.html
+    ├── css/
+    └── js/
 ```
+
+### 技术栈
+
+后端：
+
+- Rust
+- Axum
+- Tokio
+- Rayon
+- rust-embed
+- image
+- kamadak-exif
+
+前端：
+
+- 原生 HTML / CSS / JavaScript
+- ES Modules
+- 虚拟滚动
+- 智能图片加载队列
+
+### 性能设计
+
+- 图片列表扫描时按 `mtime` 和 `size` 缓存 EXIF 元数据。
+- 缩略图和预览图会缓存在内存中。
+- 前端使用 Intersection Observer，只加载接近视口的图片。
+- 图片加载队列限制并发，避免浏览器一次性加载太多图片。
+- 静态资源通过 `rust-embed` 编译进二进制。
