@@ -6,7 +6,7 @@ metadata:
 spec:
   containers:
     - name: photo-viewer
-      image: localhost/photo-viewer:latest
+      image: ghcr.io/aaronzsam101/aviation-photo-viewer:latest
       ports:
         - containerPort: 3000
           hostPort: 3000
