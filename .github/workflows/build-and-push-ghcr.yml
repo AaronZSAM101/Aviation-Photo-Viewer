@@ -13,9 +13,22 @@ env:
   IMAGE_NAME: aviation-photo-viewer
 
 jobs:
+  meta:
+    name: Generate build metadata
+    runs-on: ubuntu-24.04
+    permissions: {}
+    outputs:
+      datetime_tag: ${{ steps.meta.outputs.datetime_tag }}
+    steps:
+      - name: Generate datetime tag
+        id: meta
+        shell: bash
+        run: echo "datetime_tag=$(date -u +'%Y%m%d-%H%M%S')-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
   build:
     name: Build ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
+    needs: meta
     permissions:
       contents: read
       packages: write
@@ -53,7 +66,8 @@ jobs:
             version="${GITHUB_REF_NAME#v}"
             echo "arch_tags=${image}:${GITHUB_REF_NAME}-${{ matrix.arch }},${image}:${version}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
           else
-            echo "arch_tags=${image}:latest-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+            datetime_tag="${{ needs.meta.outputs.datetime_tag }}"
+            echo "arch_tags=${image}:${datetime_tag}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push
@@ -70,7 +84,7 @@ jobs:
   manifest:
     name: Create multi-arch tags
     runs-on: ubuntu-24.04
-    needs: build
+    needs: [meta, build]
     permissions:
       contents: read
       packages: write
@@ -98,8 +112,10 @@ jobs:
               "${image}:${GITHUB_REF_NAME}-amd64" \
               "${image}:${GITHUB_REF_NAME}-arm64"
           else
+            datetime_tag="${{ needs.meta.outputs.datetime_tag }}"
             docker buildx imagetools create \
               -t "${image}:latest" \
-              "${image}:latest-amd64" \
-              "${image}:latest-arm64"
+              -t "${image}:${datetime_tag}" \
+              "${image}:${datetime_tag}-amd64" \
+              "${image}:${datetime_tag}-arm64"
           fi
