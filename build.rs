@@ -4,6 +4,7 @@ fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/refs/heads");
     println!("cargo:rerun-if-env-changed=PHOTO_VIEWER_VERSION");
+    println!("cargo:rerun-if-env-changed=PHOTO_VIEWER_VERSION_SOURCE");
 
     if let Ok(p) = env::var("DEFAULT_PHOTOS_DIR") {
         println!("cargo:rustc-env=DEFAULT_PHOTOS_DIR={}", p);
@@ -14,11 +15,11 @@ fn main() {
     println!("cargo:rustc-env=PHOTO_VIEWER_VERSION_SOURCE={}", source);
 }
 
-fn build_version() -> (String, &'static str) {
+fn build_version() -> (String, String) {
     if let Ok(version) = env::var("PHOTO_VIEWER_VERSION") {
         let version = version.trim();
         if !version.is_empty() {
-            return (version.to_string(), "ghcr");
+            return (version.to_string(), version_source("ghcr"));
         }
     }
 
@@ -27,7 +28,21 @@ fn build_version() -> (String, &'static str) {
         Some(sha) => format!("local-{timestamp}+{sha}"),
         None => format!("local-{timestamp}"),
     };
-    (version, "local")
+    (version, version_source("local"))
+}
+
+fn version_source(default: &str) -> String {
+    match env::var("PHOTO_VIEWER_VERSION_SOURCE") {
+        Ok(source) => {
+            let source = source.trim();
+            if source.is_empty() {
+                default.to_string()
+            } else {
+                source.to_string()
+            }
+        }
+        Err(_) => default.to_string(),
+    }
 }
 
 fn build_timestamp() -> Option<String> {

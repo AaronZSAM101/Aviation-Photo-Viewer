@@ -82,6 +82,7 @@ jobs:
           tags: ${{ steps.tags.outputs.arch_tags }}
           build-args: |
             PHOTO_VIEWER_VERSION=${{ steps.tags.outputs.display_tag }}
+            PHOTO_VIEWER_VERSION_SOURCE=ghcr
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
