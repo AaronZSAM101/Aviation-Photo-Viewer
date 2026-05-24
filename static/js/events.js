@@ -19,6 +19,7 @@ import {
 } from './viewer.js';
 import { openFileOpDialog, commitFileOp, openBulkMoveDialog, commitBulkMove } from './file-ops.js';
 import { openExifEditDialog, commitExifEdit } from './exif-edit.js';
+import { openCompareDialog } from './compare.js';
 import { syncSelectionUI } from './selection.js';
 
 function openShortcutsModal() {
@@ -151,6 +152,7 @@ export function bindAllEvents() {
   });
   $('btn-bulk-delete').addEventListener('click', stageBulkDelete);
   $('btn-bulk-move').addEventListener('click', openBulkMoveDialog);
+  $('btn-compare').addEventListener('click', openCompareDialog);
   $('btn-stage-list').addEventListener('click', showStagedList);
   $('btn-stage-apply').addEventListener('click', () => {
     $('modal-staged').classList.add('show');
@@ -215,11 +217,14 @@ export function bindAllEvents() {
   }
 
   function buildCardMenuHTML(isBulk) {
-    if (state.readOnly) return '';
-    const items = [
-      '<button class="card-context-item danger" data-kind="delete">删除</button>',
-      '<div class="card-context-sep"></div>',
-    ];
+    const items = [];
+    if (isBulk && state.selectedSubpaths.size === 2) {
+      items.push('<button class="card-context-item" data-kind="compare">相似对比</button>');
+      if (!state.readOnly) items.push('<div class="card-context-sep"></div>');
+    }
+    if (state.readOnly) return items.join('');
+    items.push('<button class="card-context-item danger" data-kind="delete">删除</button>');
+    items.push('<div class="card-context-sep"></div>');
     if (!isBulk) items.push('<button class="card-context-item" data-kind="rename">重命名</button>');
     items.push('<button class="card-context-item" data-kind="move">移动</button>');
     items.push('<button class="card-context-item" data-kind="copy">复制</button>');
@@ -237,7 +242,9 @@ export function bindAllEvents() {
 
     if (isBulk) {
       if (!srcs.length) return;
-      if (kind === 'delete') {
+      if (kind === 'compare') {
+        openCompareDialog();
+      } else if (kind === 'delete') {
         for (const s of srcs) await stageSingleDelete(s);
       } else if (kind === 'move') {
         openBulkMoveDialog();
@@ -254,7 +261,6 @@ export function bindAllEvents() {
   document.addEventListener('contextmenu', e => {
     const card = e.target.closest('.card');
     if (!card) return;
-    if (state.readOnly) return;
     e.preventDefault();
 
     const idx = parseInt(card.dataset.photosIdx, 10);
@@ -278,6 +284,7 @@ export function bindAllEvents() {
     }
 
     cardMenu.innerHTML = buildCardMenuHTML(state.cardMenuIsBulk);
+    if (!cardMenu.innerHTML) return;
     const menuW = 150, menuH = 160;
     const x = Math.min(e.clientX, window.innerWidth  - menuW - 8);
     const y = Math.min(e.clientY, window.innerHeight - menuH - 8);

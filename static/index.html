@@ -60,6 +60,7 @@
     <div class="sep"></div>
     <button id="btn-bulk-move">📁 批量移动</button>
     <button id="btn-bulk-delete">🗑️ 批量删除</button>
+    <button id="btn-compare">◎ 相似对比 <span class="wip-tag">WIP</span></button>
     <button id="btn-stage-apply">✅ 应用分批</button>
     <button id="btn-stage-list">📄 分批列表</button>
     <button id="btn-trash">♻️ 回收站</button>
@@ -270,6 +271,19 @@
     <div class="modal-footer">
       <button data-close-modal="modal-bulk-move">取消</button>
       <button id="btn-commit-bulk-move" class="primary">确定</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-compare" class="modal">
+  <div class="modal-content compare-modal">
+    <div class="modal-header">
+      <h2 class="modal-title">相似照片对比</h2>
+      <button class="modal-close" data-close-modal="modal-compare">×</button>
+    </div>
+    <div class="modal-body" id="compare-body"></div>
+    <div class="modal-footer">
+      <button data-close-modal="modal-compare">关闭</button>
     </div>
   </div>
 </div>

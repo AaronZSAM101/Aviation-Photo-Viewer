@@ -136,12 +136,14 @@ export function render() {
 }
 
 // ── 折叠区块 ──────────────────────────────────────────────────────────────
-function makeSection(label, icon, count) {
+function makeSection(label, icon, count, key) {
+  const collapsed = state.collapseAll || (key && state.collapsedSections.has(key));
   const sec = document.createElement('div');
-  sec.className = 'folder-section' + (state.collapseAll ? ' collapsed' : '');
+  sec.className = 'folder-section' + (collapsed ? ' collapsed' : '');
+  if (key) sec.dataset.sectionKey = key;
   sec.innerHTML = `
-    <div class="folder-header" role="button" aria-expanded="${state.collapseAll ? 'false' : 'true'}">
-      <span class="folder-toggle">${state.collapseAll ? '▸' : '▾'}</span>
+    <div class="folder-header" role="button" aria-expanded="${collapsed ? 'false' : 'true'}">
+      <span class="folder-toggle">${collapsed ? '▸' : '▾'}</span>
       <span class="folder-icon">${icon}</span>
       <span class="folder-name">${label}</span>
       <span class="folder-count">${count} 张</span>
@@ -159,12 +161,26 @@ function wireSectionToggles() {
       const toggle = header.querySelector('.folder-toggle');
       if (toggle) toggle.textContent = collapsed ? '▸' : '▾';
       header.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      const key = sec.dataset.sectionKey;
+      if (key) {
+        if (collapsed) state.collapsedSections.add(key);
+        else           state.collapsedSections.delete(key);
+      }
       syncCollapseStateFromDOM();
     });
   });
 }
 
 export function applyCollapseStateToSections() {
+  if (state.collapseAll) {
+    state.collapsedSections = new Set(
+      [...dom.content.querySelectorAll('.folder-section[data-section-key]')]
+        .map(sec => sec.dataset.sectionKey)
+        .filter(Boolean)
+    );
+  } else {
+    state.collapsedSections.clear();
+  }
   dom.content.querySelectorAll('.folder-section').forEach(sec => {
     sec.classList.toggle('collapsed', state.collapseAll);
     const header = sec.querySelector(':scope > .folder-header');
@@ -178,6 +194,11 @@ function syncCollapseStateFromDOM() {
   const sections = [...dom.content.querySelectorAll('.folder-section')];
   if (!sections.length) state.collapseAll = false;
   else                  state.collapseAll = sections.every(sec => sec.classList.contains('collapsed'));
+  state.collapsedSections = new Set(
+    sections
+      .filter(sec => sec.classList.contains('collapsed') && sec.dataset.sectionKey)
+      .map(sec => sec.dataset.sectionKey)
+  );
   refreshCollapseButton();
 }
 
@@ -213,7 +234,7 @@ function renderTimeGrouped(list, scale) {
     return asc ? a.sort - b.sort : b.sort - a.sort;
   });
   entries.forEach(info => {
-    const sec = makeSection(info.label, '📅', info.items.length);
+    const sec = makeSection(info.label, '📅', info.items.length, `time:${scale}:${info.label}`);
     const grid = makeGrid();
     const frag = document.createDocumentFragment();
     info.items.forEach(({ p, idx }) => frag.appendChild(makeCard(p, ++state.globalIndex, idx)));
@@ -240,7 +261,7 @@ function renderGrouped(list) {
   });
   [...map.keys()].sort((a, b) => a.localeCompare(b)).forEach(folder => {
     const items = map.get(folder);
-    const sec = makeSection(folder, '▤', items.length);
+    const sec = makeSection(folder, '▤', items.length, `folder:${folder}`);
     const grid = makeGrid();
     const frag = document.createDocumentFragment();
     items.forEach(({ p, idx }) => frag.appendChild(makeCard(p, ++state.globalIndex, idx)));
@@ -262,7 +283,7 @@ function renderFolderTimeGrouped(list, scale) {
 
   [...folderMap.keys()].sort((a, b) => a.localeCompare(b, 'zh-CN')).forEach(folder => {
     const folderItems = folderMap.get(folder);
-    const sec = makeSection(folder, '▤', folderItems.length);
+    const sec = makeSection(folder, '▤', folderItems.length, `folder:${folder}`);
 
     const timeMap = new Map();
     folderItems.forEach(({ p, idx }) => {
@@ -278,7 +299,12 @@ function renderFolderTimeGrouped(list, scale) {
     });
 
     timeEntries.forEach(info => {
-      const sub  = makeSection(info.label, '📅', info.items.length);
+      const sub  = makeSection(
+        info.label,
+        '📅',
+        info.items.length,
+        `folder:${folder}:time:${scale}:${info.label}`
+      );
       const grid = makeGrid();
       const frag = document.createDocumentFragment();
       info.items.forEach(({ p, idx }) => frag.appendChild(makeCard(p, ++state.globalIndex, idx)));

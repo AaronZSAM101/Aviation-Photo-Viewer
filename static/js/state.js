@@ -12,6 +12,7 @@ export const dom = {
   stats:       $('stats'),
   loading:     $('loading'),
   loadingMsg:  $('loading-msg'),
+  compareBody: $('compare-body'),
 
   // Viewer
   viewer:        $('viewer'),
@@ -53,6 +54,7 @@ export const state = {
   baseView:    'flat',
   timeScale:   'none',
   collapseAll: false,
+  collapsedSections: new Set(),
   readOnly:    false,
   appVersion:  null,
   user:        null,

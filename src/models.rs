@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 use tokio::sync::RwLock;
 
 /// 存储EXIF元数据
@@ -34,6 +38,51 @@ pub struct CachedMeta {
     pub sort_key: i64,
 }
 
+/// 文件系统扫描到的照片条目
+#[derive(Clone)]
+pub struct PhotoEntry {
+    pub path: PathBuf,
+    pub subpath: String,
+    pub filename: String,
+    pub folder: String,
+    pub size: u64,
+    pub mtime: u64,
+}
+
+/// 缓存的感知哈希
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CachedHash {
+    pub mtime: u64,
+    pub size: u64,
+    #[serde(default)]
+    pub phash: u64,
+    #[serde(default)]
+    pub dhash: u64,
+    #[serde(default)]
+    pub color_sig: [u8; 12],
+    #[serde(default)]
+    pub aspect_milli: u32,
+}
+
+/// 后台相似照片扫描任务
+#[derive(Clone, Serialize, Deserialize)]
+pub struct SimilarScanJob {
+    pub id: String,
+    pub status: String,
+    pub threshold: u32,
+    pub limit: usize,
+    pub max_photos: usize,
+    pub scanned: usize,
+    pub processed: usize,
+    pub hashed: usize,
+    pub cached: usize,
+    pub unreadable: usize,
+    pub total: usize,
+    pub truncated: bool,
+    pub pairs: Vec<serde_json::Value>,
+    pub error: Option<String>,
+}
+
 /// 应用状态
 #[derive(Clone)]
 pub struct AppState {
@@ -48,6 +97,12 @@ pub struct AppState {
     pub staged_ops: Arc<RwLock<Vec<StagedOp>>>,
     /// 相对路径 → 缓存的EXIF元数据
     pub meta_cache: Arc<RwLock<HashMap<String, CachedMeta>>>,
+    /// 相对路径 → 缓存的感知哈希
+    pub phash_cache: Arc<RwLock<HashMap<String, CachedHash>>>,
+    /// 后台相似照片扫描任务
+    pub similar_jobs: Arc<RwLock<HashMap<String, Arc<Mutex<SimilarScanJob>>>>>,
+    /// 是否已有感知哈希预热任务在运行
+    pub phash_warmup_running: Arc<Mutex<bool>>,
     /// 相对路径 → 人工编辑后的 EXIF 覆盖值
     pub exif_overrides: Arc<RwLock<HashMap<String, ExifData>>>,
 }

@@ -10,15 +10,12 @@ use tokio::fs;
 use crate::exif::extract_exif;
 use crate::exif_edit::apply_exif_override;
 use crate::models::{AppState, CachedMeta, PhotoMeta, PhotosQuery};
-use crate::utils::safe_subpath;
+use crate::utils::{collect_photo_entries, safe_subpath};
 
 /// 把整个 static/ 目录嵌入二进制（编译期）
 #[derive(rust_embed::RustEmbed)]
 #[folder = "static/"]
 struct StaticAssets;
-
-/// 支持的图片扩展名
-const SUPPORTED_EXTS: &[&str] = &["jpg", "jpeg", "png", "tiff", "tif", "webp"];
 
 /// 预览图片最大尺寸
 const PREVIEW_MAX: u32 = 2400;
@@ -132,81 +129,13 @@ pub async fn list_photos(
     Query(q): Query<PhotosQuery>,
     State(state): State<AppState>,
 ) -> Json<Vec<PhotoMeta>> {
-    struct WalkEntry {
-        path: PathBuf,
-        subpath: String,
-        filename: String,
-        folder: String,
-        size: u64,
-        mtime: u64,
-    }
-
     let started = std::time::Instant::now();
 
     // 步骤1：在blocking池中遍历文件系统，避免阻塞tokio
     let photos_dir = state.photos_dir.read().await.clone();
-    let photos_root = photos_dir.clone();
-    let entries: Vec<WalkEntry> = tokio::task::spawn_blocking(move || {
-        use walkdir::WalkDir;
-        WalkDir::new(photos_dir)
-            .max_depth(4)
-            .into_iter()
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                // 跳过相对于 photos_root 路径中任一以 '@' 开头的组件
-                if let Ok(rel) = e.path().strip_prefix(&photos_root) {
-                    if rel
-                        .components()
-                        .any(|c| c.as_os_str().to_string_lossy().starts_with('@'))
-                    {
-                        return false;
-                    }
-                }
-                e.file_type().is_file() && {
-                    let ext = e
-                        .path()
-                        .extension()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .to_lowercase();
-                    SUPPORTED_EXTS.contains(&ext.as_str())
-                }
-            })
-            .filter_map(|entry| {
-                let path = entry.path().to_path_buf();
-                let metadata = entry.metadata().ok()?;
-                let size = metadata.len();
-                let mtime = metadata
-                    .modified()
-                    .ok()?
-                    .duration_since(UNIX_EPOCH)
-                    .ok()?
-                    .as_secs();
-                let filename = path.file_name().and_then(|s| s.to_str())?.to_string();
-                let folder = path
-                    .parent()
-                    .and_then(|p| p.strip_prefix(&photos_root).ok())
-                    .and_then(|p| p.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                let subpath = if folder.is_empty() {
-                    filename.clone()
-                } else {
-                    format!("{}/{}", folder, filename)
-                };
-                Some(WalkEntry {
-                    path,
-                    subpath,
-                    filename,
-                    folder,
-                    size,
-                    mtime,
-                })
-            })
-            .collect()
-    })
-    .await
-    .unwrap_or_default();
+    let entries = tokio::task::spawn_blocking(move || collect_photo_entries(photos_dir, None).0)
+        .await
+        .unwrap_or_default();
 
     let total = entries.len();
 
@@ -279,6 +208,18 @@ pub async fn list_photos(
                 }
             }
         });
+    }
+
+    let warm_phash_on_list = matches!(
+        std::env::var("PHASH_WARMUP")
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "1" | "true" | "yes" | "on"
+    );
+    if warm_phash_on_list {
+        crate::hash::spawn_phash_warmup(state.clone(), entries.clone());
     }
 
     // 步骤4：清除已删除文件的缓存（立即执行以避免缓存无限增长）

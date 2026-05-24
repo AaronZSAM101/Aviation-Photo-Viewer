@@ -130,6 +130,9 @@ async fn main() {
         preview_cache: Arc::new(RwLock::new(HashMap::new())),
         staged_ops: Arc::new(RwLock::new(Vec::new())),
         meta_cache: Arc::new(RwLock::new(HashMap::new())),
+        phash_cache: Arc::new(RwLock::new(HashMap::new())),
+        similar_jobs: Arc::new(RwLock::new(HashMap::new())),
+        phash_warmup_running: Arc::new(std::sync::Mutex::new(false)),
         exif_overrides: Arc::new(RwLock::new(HashMap::new())),
     };
 
@@ -158,6 +161,32 @@ async fn main() {
                 }
             }
             Err(e) => tracing::warn!("Failed to read meta cache file: {}", e),
+        }
+    }
+
+    // 感知哈希缓存（用于相似照片扫描，避免每次重算全量原图）
+    let hash_cache_file = {
+        let pd = state.photos_dir.read().await.clone();
+        pd.join(".photo_viewer_hash_cache.json")
+    };
+    if hash_cache_file.exists() {
+        match tokio::fs::read_to_string(&hash_cache_file).await {
+            Ok(s) => {
+                match serde_json::from_str::<HashMap<String, photo_viewer::models::CachedHash>>(&s)
+                {
+                    Ok(map) => {
+                        let mut guard = state.phash_cache.write().await;
+                        *guard = map;
+                        tracing::info!(
+                            "Loaded hash cache from {} ({} entries)",
+                            hash_cache_file.display(),
+                            guard.len()
+                        );
+                    }
+                    Err(e) => tracing::warn!("Failed to parse hash cache: {}", e),
+                }
+            }
+            Err(e) => tracing::warn!("Failed to read hash cache file: {}", e),
         }
     }
 
@@ -234,6 +263,9 @@ async fn main() {
         .route("/api/trash/list", get(file_ops::list_trash))
         .route("/api/hash/*subpath", get(hash::hash_file))
         .route("/api/compare", get(hash::compare_photos))
+        .route("/api/similar", get(hash::find_similar_photos))
+        .route("/api/similar/jobs", post(hash::start_similar_scan_job))
+        .route("/api/similar/jobs/:id", get(hash::get_similar_scan_job))
         .route(
             "/api/exif/lens/*subpath",
             get(handlers::lens_model_for_photo),
