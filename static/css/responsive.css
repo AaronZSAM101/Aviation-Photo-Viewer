@@ -1,0 +1,380 @@
+@media (max-width: 900px){
+  header{
+    padding:8px 10px;
+    gap:8px;
+    top:0;
+  }
+  .logo{
+    font-size:12px;
+    letter-spacing:.06em;
+  }
+  .toolbar{
+    width:100%;
+    flex-wrap:nowrap;
+    overflow-x:auto;
+    overflow-y:hidden;
+    padding-bottom:2px;
+    scrollbar-width:thin;
+    -webkit-overflow-scrolling:touch;
+  }
+  .toolbar > *{flex:0 0 auto}
+  .toolbar .sep,
+  .toolbar .lbl{display:none}
+  select,button,input[type="text"],input[type="search"]{
+    min-height:34px;
+    padding:6px 10px;
+    font-size:12px;
+  }
+  #search-box{width:130px !important}
+  .stats{font-size:10px;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+
+  #content{padding:10px}
+  .folder-section{margin-bottom:20px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(138px,1fr));gap:8px}
+  .card{transition:border-color .12s}
+  .card:hover{transform:none}
+  .thumb img{transition:opacity .16s}
+  .thumb .loader{
+    width:14px;
+    height:14px;
+    border-width:1px;
+    animation:none;
+    opacity:.7;
+  }
+  .card-name,.card-date,.card-meta{font-size:10px}
+
+  #vtoolbar{
+    flex-direction:column;
+    align-items:stretch;
+    gap:6px;
+    padding:8px;
+  }
+  #v-toolbar-meta{
+    width:100%;
+  }
+  #v-toolbar-tools{
+    width:100%;
+    display:grid;
+    grid-template-columns:repeat(auto-fill,minmax(32px,1fr));
+    gap:6px;
+  }
+  #vtoolbar button{padding:6px 8px;font-size:11px;min-height:32px}
+  #vtoolbar button[data-short]{
+    width:100%;
+    min-width:0;
+    height:32px;
+    padding:0;
+    font-size:0;
+    line-height:1;
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+  }
+  #vtoolbar button[data-short]::before{
+    content:attr(data-short);
+    font-size:11px;
+    line-height:1;
+  }
+  #vtoolbar .vsep{display:none !important}
+  #v-name{font-size:10px;min-width:0}
+  #v-counter{font-size:10px;flex:0 0 auto;margin-left:auto}
+
+  #vinfo{
+    position:absolute;
+    left:0;
+    right:0;
+    bottom:0;
+    width:auto;
+    max-height:32vh;
+    border-left:none;
+    border-top:1px solid var(--border);
+    background:var(--surface-elevated);
+    z-index:5;
+    padding:10px 12px;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior:contain;
+  }
+  .sec{margin-bottom:10px}
+  .sec-title{font-size:8px;margin-bottom:4px;padding-bottom:4px}
+  .row{padding:1px 0}
+  .rk,.rv{font-size:9px}
+  .rv{overflow-wrap:anywhere}
+  #vstage{padding-bottom:0}
+  #vstage.info-open{padding-bottom:12vh}
+  #vstage.chart-open-one,
+  #vstage.chart-open-two{padding-top:0}
+  #vstage > #v-charts:not(.in-info){
+    top:calc(8px + env(safe-area-inset-top));
+    left:auto;
+    right:calc(8px + env(safe-area-inset-right));
+    width:min(76vw,360px);
+    max-width:360px;
+    display:flex;
+    flex-direction:row;
+    gap:6px;
+    align-items:stretch;
+  }
+  #vstage > #v-charts:not(.in-info) .chart-panel.show{
+    flex:1;
+    min-width:0;
+  }
+  #vstage > #v-charts:not(.in-info) #v-hist-panel{order:1}
+  #vstage > #v-charts:not(.in-info) #v-rgb-panel{order:2}
+  .chart-panel{width:auto;height:110px}
+
+  .nav-arrow{
+    opacity:.82;
+    width:34px;
+    height:52px;
+    font-size:22px;
+  }
+  #v-prev{left:6px}
+  #v-next{right:6px}
+
+  .modal-content{
+    width:min(96vw,600px);
+    max-height:86vh;
+    padding:14px;
+  }
+  .compare-actions,.compare-grid,.compare-metrics,.similar-pair-photos{grid-template-columns:1fr}
+  .compare-scan-controls{grid-template-columns:repeat(3,minmax(72px,1fr))}
+  .compare-modal{width:calc(100vw - 18px)}
+  .exif-form-grid{grid-template-columns:1fr}
+  .shortcut-grid{grid-template-columns:1fr}
+}
+
+/* (removed mobile bottom-embedded chart override; charts remain top-right floating)
+   If needed, layout adjustments for portrait are handled via JS positioning. */
+
+@media (pointer: coarse){
+  .card:hover{transform:none}
+}
+
+@media (max-width: 900px) and (orientation: portrait){
+  /* ── EXIF host (mobile portrait) ──
+     - 关闭 charts：EXIF 单列铺满底部
+     - 打开 charts：EXIF 收缩到右侧窄列，charts 占左侧主区域 */
+  #vinfo{
+    position:absolute;
+    left:0;
+    right:0;
+    bottom:0;
+    width:auto;
+    max-height:42vh;
+    border-left:none;
+    border-top:1px solid var(--border);
+    background:var(--surface-elevated);
+    z-index:5;
+    padding:10px 12px;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior:contain;
+  }
+  /* display/flex 只在 .show 上加，确保按下 I 取消 .show 时能真正隐藏 */
+  #vinfo.show{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    align-items:stretch;
+  }
+
+  /* 仅 EXIF（charts 全关）：vinfo-sections 铺满（charts 占位的隐藏由基础规则负责） */
+  #vinfo:not(.charts-open) .vinfo-sections{width:100%}
+
+  /* charts 任一开启：两列布局，整体抬高到 ~50vh 以放下两张图 */
+  #vinfo.charts-open{
+    flex-direction:row;
+    gap:10px;
+    align-items:stretch;
+    max-height:50vh;
+  }
+
+  /* 左列：charts (~55%)，弹性高度，两张图等分纵向空间 */
+  #vinfo.charts-open > #v-charts.in-info{
+    order:0;
+    position:relative;
+    flex:0 0 55%;
+    width:auto;
+    min-width:0;
+    max-width:none;
+    max-height:none;
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    margin:0;
+    padding:0;
+    overflow:visible;
+    pointer-events:auto;
+    align-self:stretch;
+  }
+  /* 只显示被 .show 标记的 panel，让 RGB / Histogram 单开时占满整个左列 */
+  #vinfo.charts-open > #v-charts.in-info .chart-panel{display:none}
+  #vinfo.charts-open > #v-charts.in-info .chart-panel.show{
+    display:flex;
+    flex-direction:column;
+    flex:1 1 0;
+    width:100%;
+    height:auto;
+    min-height:0;
+    margin:0;
+    padding:6px 8px 4px;
+    background:rgba(255,255,255,0.98);
+    box-shadow:0 4px 14px rgba(0,0,0,.45);
+    border-radius:6px;
+  }
+  #vinfo.charts-open > #v-charts.in-info .chart-title{
+    font-size:10px;
+    color:#333;
+    letter-spacing:.08em;
+    padding:0 0 4px;
+    margin:0;
+  }
+  #vinfo.charts-open > #v-charts.in-info .chart-svg{
+    flex:1 1 0;
+    width:100%;
+    height:auto;
+    min-height:0;
+  }
+
+  /* 右列：EXIF 外壳 (~45%)，内部可滚动；多 section 在外壳内正常垂直堆叠 */
+  #vinfo.charts-open .vinfo-sections{
+    order:1;
+    flex:1 1 0;
+    min-width:0;
+    overflow-y:auto;
+    max-height:calc(50vh - 24px);
+    padding:0 2px 0 4px;
+  }
+  /* 单个 section：在窄列里减小 margin/title，保持紧凑 */
+  #vinfo.charts-open .sec{margin-bottom:8px}
+  #vinfo.charts-open .sec:last-child{margin-bottom:0}
+  #vinfo.charts-open .sec-title{font-size:8px;padding-bottom:3px;margin-bottom:4px}
+  /* 行内：key 紧凑左对齐 + value 右对齐，按词换行而不是逐字符竖排 */
+  #vinfo.charts-open .row{
+    display:flex;
+    align-items:baseline;
+    justify-content:space-between;
+    gap:8px;
+    padding:3px 0;
+  }
+  #vinfo.charts-open .rk{
+    flex:0 0 auto;
+    max-width:42%;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    font-size:9px;
+    color:var(--muted);
+    padding:0;
+  }
+  #vinfo.charts-open .rv{
+    flex:1 1 auto;
+    min-width:0;
+    text-align:right;
+    font-size:9px;
+    white-space:normal;
+    overflow-wrap:anywhere;
+    word-break:normal;
+    hyphens:none;
+  }
+
+  /* 让图片在底部抬出空间，避免与 charts-open 后的更高 EXIF 框重叠 */
+  #vstage.info-open.chart-open-one,
+  #vstage.info-open.chart-open-two{padding-bottom:50vh}
+
+  /* charts-only（EXIF 关）：vinfo 改回 column，charts 撑满 vinfo 宽度，
+     高度由 charts 内容决定，不再左右分栏 */
+  #vinfo.charts-open:not(.exif-on){
+    flex-direction:column;
+    max-height:none;
+    gap:6px;
+  }
+  #vinfo.charts-open:not(.exif-on) > #v-charts.in-info{
+    flex:0 0 auto;
+    width:100%;
+    max-width:none;
+    min-width:0;
+  }
+  /* 关键：vinfo 高度内容驱动时不能用 flex:1 1 0（会塌成 0），改用显式高度 */
+  #vinfo.charts-open:not(.exif-on) > #v-charts.in-info .chart-panel.show{
+    flex:0 0 auto;
+    height:115px;
+  }
+  /* 仅 charts 时 vstage 抬出的空间对应缩小：
+     单 chart ≈ 115+20padding = 135px，双 chart ≈ 115*2+6gap+20 = 256px */
+  #vstage.info-open.chart-open-one:not(.exif-on-stage){padding-bottom:20vh}
+  #vstage.info-open.chart-open-two:not(.exif-on-stage){padding-bottom:34vh}
+}
+
+@media (max-width: 560px){
+  #empty{padding:24px 14px}
+  #empty p{font-size:11px}
+  .grid{grid-template-columns:repeat(auto-fill,minmax(122px,1fr));gap:7px}
+  .card-info{padding:6px 7px}
+  .badge{font-size:8px}
+  #v-name{display:none}
+  #v-counter{margin-left:2px}
+  #vstage.info-open{padding-bottom:14vh}
+  #vstage.chart-open-one,
+  #vstage.chart-open-two{padding-top:0}
+  #vstage > #v-charts:not(.in-info){width:min(82vw,300px);max-width:300px}
+  #vinfo{max-height:28vh;padding:8px 10px}
+  .chart-panel{height:92px}
+  .modal-footer{flex-wrap:wrap;justify-content:stretch}
+  .modal-footer button{flex:1 1 120px}
+}
+
+@media (max-width: 900px) and (orientation: landscape){
+  #vtoolbar{
+    padding:6px;
+    gap:5px;
+  }
+  #v-toolbar-tools{
+    grid-template-columns:repeat(auto-fill,minmax(30px,1fr));
+    gap:5px;
+  }
+  #vtoolbar button[data-short]{height:30px}
+  #vmain{align-items:stretch}
+  #vstage.chart-open-one,
+  #vstage.chart-open-two{padding-top:0}
+  #vinfo{
+    position:relative;
+    left:auto;
+    right:auto;
+    bottom:auto;
+    width:36vw;
+    max-width:320px;
+    max-height:none;
+    border-top:none;
+    border-left:1px solid var(--border);
+    background:var(--surface);
+    padding:8px 10px;
+  }
+  /* 横屏 vinfo：列布局 — charts 在上、EXIF 在下，跟桌面一致。
+     display 只在 .show 上加，保留 I 键的隐藏/显示切换。 */
+  #vinfo.show{
+    display:flex;
+    flex-direction:column;
+    gap:8px;
+    align-items:stretch;
+  }
+  /* charts 容器：占满 vinfo 宽度堆在顶部，关闭时由全局 :not(.charts-open) 规则隐藏 */
+  #vinfo > #v-charts.in-info{
+    position:relative;
+    top:auto;
+    width:100%;
+    min-width:0;
+    margin:0;
+    display:flex;
+    flex-direction:column;
+    gap:6px;
+    padding-bottom:0;
+  }
+  #vinfo > #v-charts.in-info .chart-panel.show{
+    width:100%;
+    height:80px;
+  }
+  /* EXIF 列：占满 vinfo 宽度、纵向填满剩余高度并独立滚动 */
+  #vinfo .vinfo-sections{flex:1 1 0;min-height:0;min-width:0;overflow-y:auto;width:100%}
+  #vstage.info-open{padding-bottom:0}
+}
+

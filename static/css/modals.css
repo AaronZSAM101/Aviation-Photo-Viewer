@@ -1,0 +1,109 @@
+/* Modals */
+.modal{display:none;position:fixed;inset:0;background:var(--overlay);z-index:400;align-items:center;justify-content:center}
+.modal.show{display:flex}
+.modal-content{background:var(--surface);border:1px solid var(--border);border-radius:8px;max-width:600px;max-height:80vh;overflow-y:auto;padding:20px;box-shadow:var(--shadow-lg),0 0 0 1px var(--accent-glow)}
+.modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border2)}
+.modal-title{font-size:16px;font-weight:500;color:var(--text)}
+.modal-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:0;width:24px;height:24px;display:flex;align-items:center;justify-content:center}
+.modal-close:hover{color:var(--text)}
+.modal-body{margin-bottom:16px;font-size:13px;color:var(--text)}
+.modal-footer{display:flex;gap:8px;justify-content:flex-end}
+.modal-footer button{background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px}
+.modal-footer button:hover{border-color:var(--accent);background:var(--surface-hover)}
+.modal-footer button.primary{background:var(--accent);color:var(--on-accent);border-color:var(--accent)}
+.modal-footer button.primary:hover{background:var(--accent-hover)}
+
+/* ── 快捷键面板 ────────────────────────────────────────────────────── */
+.shortcut-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:18px 22px;
+}
+.shortcut-group{padding:0;background:transparent;border:none}
+.shortcut-group-wide{grid-column:1 / -1}
+.shortcut-group-title{
+  font-size:10px;
+  font-weight:600;
+  letter-spacing:.14em;
+  text-transform:uppercase;
+  color:var(--muted);
+  margin:0 0 10px;
+  padding-bottom:6px;
+  border-bottom:1px solid var(--border2);
+}
+.shortcut-list{display:flex;flex-direction:column;gap:4px}
+.shortcut-row{
+  display:grid;
+  grid-template-columns:minmax(110px,auto) 1fr;
+  gap:14px;
+  align-items:center;
+  padding:5px 0;
+  border-radius:4px;
+  font-size:12px;
+  color:var(--text);
+}
+.shortcut-row:hover{background:var(--row-hover)}
+.shortcut-keys{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+  align-items:center;
+  justify-content:flex-start;
+}
+/* 类键盘按键 chip — 通过 --kbd-* token 适配亮/暗 */
+.shortcut-keys kbd{
+  font-family:var(--mono);
+  font-size:11px;
+  line-height:1;
+  color:var(--kbd-fg);
+  background:var(--kbd-bg);
+  border:1px solid var(--kbd-border);
+  border-bottom-color:var(--kbd-border-bottom);
+  border-radius:4px;
+  padding:4px 7px;
+  min-width:22px;
+  text-align:center;
+  display:inline-block;
+  box-shadow:var(--kbd-shadow);
+  white-space:nowrap;
+}
+.shortcut-keys .kbd-sep{
+  color:var(--hint);
+  font-size:10px;
+  font-family:var(--mono);
+  padding:0 1px;
+  user-select:none;
+}
+.shortcut-desc{
+  color:var(--text);
+  font-size:12px;
+  line-height:1.45;
+  letter-spacing:.01em;
+}
+
+.staged-item{display:flex;justify-content:space-between;align-items:center;padding:8px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;margin-bottom:8px;font-size:11px;font-family:var(--mono)}
+.staged-item-info{flex:1}
+.staged-item-actions{display:flex;gap:6px}
+.staged-item-actions button{padding:3px 8px;font-size:10px;background:var(--surface);border:1px solid var(--border2);color:var(--text);border-radius:3px;cursor:pointer}
+.staged-item-actions button:hover{border-color:var(--accent)}
+
+.trash-item{display:flex;justify-content:space-between;align-items:center;padding:8px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;margin-bottom:8px;font-size:11px;font-family:var(--mono)}
+.trash-item-name{flex:1;color:var(--accent2)}
+.trash-item-actions button{padding:3px 8px;font-size:10px;background:var(--surface);border:1px solid var(--border2);color:var(--text);border-radius:3px;cursor:pointer}
+.trash-item-actions button:hover{border-color:var(--accent)}
+
+.modal input[type="text"]{width:100%;padding:6px 8px;background:var(--surface2);border:1px solid var(--border2);border-radius:4px;color:var(--text);font-size:12px;margin-bottom:8px;font-family:var(--sans)}
+.modal input[type="text"]:focus{outline:none;border-color:var(--accent)}
+.exif-form-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.exif-field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
+.exif-field span{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.exif-field input{margin-bottom:0}
+
+.card-context-menu{position:fixed;display:none;min-width:140px;background:var(--surface);border:1px solid var(--border2);border-radius:6px;box-shadow:var(--shadow-xl);z-index:1000;padding:4px}
+.card-context-menu.show{display:block}
+.card-context-item{display:block;width:100%;text-align:left;background:transparent;border:none;color:var(--text);font-size:12px;font-family:var(--sans);padding:7px 9px;border-radius:4px;cursor:pointer}
+.card-context-item:hover{background:var(--surface2);color:var(--accent)}
+.card-context-item.danger{color:var(--danger)}
+.card-context-item.danger:hover{background:var(--danger-soft);color:var(--danger-hover)}
+.card-context-sep{height:1px;background:var(--border2);margin:4px 6px}
+
