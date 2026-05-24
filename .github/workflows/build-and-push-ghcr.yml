@@ -16,13 +16,14 @@ jobs:
   meta:
     name: Generate build metadata
     runs-on: ubuntu-24.04
+    permissions: {}
     outputs:
       datetime_tag: ${{ steps.meta.outputs.datetime_tag }}
     steps:
       - name: Generate datetime tag
         id: meta
         shell: bash
-        run: echo "datetime_tag=$(date -u +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
+        run: echo "datetime_tag=$(date -u +'%Y%m%d-%H%M%S')-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
 
   build:
     name: Build ${{ matrix.platform }}
