@@ -8,6 +8,57 @@ use uuid::Uuid;
 use crate::models::{AppState, OpKind, StagedOp};
 use crate::utils::safe_subpath;
 
+// ─── 缓存迁移辅助 ────────────────────────────────────────────────────────────
+
+/// rename/move 成功后：将所有缓存的旧路径条目迁移到新路径
+/// 让前端在同一次刷新内就能看到正确的 EXIF / 缩略图，不必等下一次扫描
+async fn move_cache_entries(state: &AppState, old_key: &str, new_key: &str) {
+    macro_rules! migrate {
+        ($field:ident) => {{
+            let mut cache = state.$field.write().await;
+            if let Some(entry) = cache.remove(old_key) {
+                cache.insert(new_key.to_string(), entry);
+            }
+        }};
+    }
+    migrate!(meta_cache);
+    migrate!(thumb_cache);
+    migrate!(preview_cache);
+    migrate!(phash_cache);
+    migrate!(exif_overrides);
+}
+
+/// copy 成功后：将缓存条目从源路径复制到目标路径（源条目保留）
+async fn copy_cache_entries(state: &AppState, src_key: &str, dst_key: &str) {
+    macro_rules! duplicate {
+        ($field:ident) => {{
+            let mut cache = state.$field.write().await;
+            if let Some(entry) = cache.get(src_key).cloned() {
+                cache.insert(dst_key.to_string(), entry);
+            }
+        }};
+    }
+    duplicate!(meta_cache);
+    duplicate!(thumb_cache);
+    duplicate!(preview_cache);
+    duplicate!(phash_cache);
+    // exif_overrides 不复制：新文件是独立的，用户若需要可单独编辑
+}
+
+/// delete 成功后：主动清除已删文件的缓存，避免等待下次 list_photos 才清理
+async fn remove_cache_entries(state: &AppState, key: &str) {
+    macro_rules! evict {
+        ($field:ident) => {{
+            state.$field.write().await.remove(key);
+        }};
+    }
+    evict!(meta_cache);
+    evict!(thumb_cache);
+    evict!(preview_cache);
+    evict!(phash_cache);
+    evict!(exif_overrides);
+}
+
 const TRASH_MANIFEST: &str = ".manifest.json";
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -261,6 +312,8 @@ pub async fn apply_stage(
                         },
                     );
                     trash_manifest_dirty = true;
+                    // 主动清除已删文件的缓存条目
+                    remove_cache_entries(&state, &op.src).await;
                     applied += 1;
                 }
             }
@@ -315,8 +368,12 @@ pub async fn apply_stage(
                     if let Some(p) = dst.parent() {
                         let _ = fs::create_dir_all(p).await;
                     }
-                    let _ = fs::rename(&src, &dst).await;
-                    applied += 1;
+                    // 修复：只有操作真正成功才计数，并迁移所有缓存条目（旧路径→新路径），
+                    // 否则重命名后立即刷新会因缓存 miss 而显示"no exif"
+                    if fs::rename(&src, &dst).await.is_ok() {
+                        move_cache_entries(&state, &op.src, &dst_rel).await;
+                        applied += 1;
+                    }
                 }
             }
             OpKind::Copy => {
@@ -328,8 +385,11 @@ pub async fn apply_stage(
                     if let Some(p) = dst.parent() {
                         let _ = fs::create_dir_all(p).await;
                     }
-                    let _ = fs::copy(&src, &dst).await;
-                    applied += 1;
+                    // 修复：只有 copy 真正成功才计数，并将缓存条目复制到新路径
+                    if fs::copy(&src, &dst).await.is_ok() {
+                        copy_cache_entries(&state, &op.src, &dst_rel).await;
+                        applied += 1;
+                    }
                 }
             }
         }

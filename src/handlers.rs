@@ -239,13 +239,10 @@ pub async fn list_photos(
         crate::hash::spawn_phash_warmup(state.clone(), entries.clone());
     }
 
-    // 步骤4：清除已删除文件的缓存（立即执行以避免缓存无限增长）
-    {
-        let mut cache = state.meta_cache.write().await;
-        let live: std::collections::HashSet<String> =
-            entries.iter().map(|e| e.subpath.clone()).collect();
-        cache.retain(|k, _| live.contains(k));
-    }
+    // 步骤4（已移除）：之前在此做缓存清理（retain 只保留 live 文件），
+    // 但这会引发竞态：apply_stage 刚把 "A.jpg" 迁移到 "A-new.jpg"，
+    // 而此处的 live 集合基于旧 FS 扫描结果，会误删迁移后的新条目。
+    // 清理现已移至后台 60 秒刷新任务（main.rs），届时会先重新扫描再清理。
 
     // 步骤5：组装PhotoMeta列表并排序
     let mut photos: Vec<PhotoMeta> = entries

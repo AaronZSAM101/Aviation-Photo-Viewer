@@ -240,13 +240,37 @@ async fn main() {
     }
 
     // 后台周期性保存 meta_cache 到磁盘，避免丢失（每 60 秒，且原子写入）
+    // 同时在每次保存前做一次 FS 扫描，清除已不存在文件的缓存条目，
+    // 避免在 list_photos 内部做 retain 引发竞态（rename 后缓存条目被误删）。
     {
         let cache_path = cache_file.clone();
         let meta_cache = state.meta_cache.clone();
+        let photos_dir_for_flush = state.photos_dir.clone();
         tokio::spawn(async move {
             let mut last_saved: Option<Vec<u8>> = None;
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+
+                // 1. 重新扫描 FS，获取当前实际存在的文件集合
+                let current_photos_dir = photos_dir_for_flush.read().await.clone();
+                let live: std::collections::HashSet<String> = tokio::task::spawn_blocking(
+                    move || {
+                        let (entries, _) =
+                            photo_viewer::utils::collect_photo_entries(current_photos_dir, None);
+                        entries.into_iter().map(|e| e.subpath).collect()
+                    },
+                )
+                .await
+                .unwrap_or_default();
+
+                // 2. 清除已不存在文件的缓存条目（安全：此时持写锁时间极短，
+                //    且 live 是刚刚完成的新鲜扫描，不存在 rename 竞态）
+                {
+                    let mut cache = meta_cache.write().await;
+                    cache.retain(|k, _| live.contains(k));
+                }
+
+                // 3. 拍快照并判断是否需要写盘
                 let snapshot = {
                     let guard = meta_cache.read().await;
                     guard.clone()
