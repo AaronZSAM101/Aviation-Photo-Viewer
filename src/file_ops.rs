@@ -1,7 +1,7 @@
 use axum::{extract::Path, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{collections::HashMap, path::Path as FsPath};
+use std::{collections::{HashMap, HashSet}, path::Path as FsPath};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -26,7 +26,11 @@ async fn read_trash_manifest(trash_dir: &FsPath) -> TrashManifest {
 
 async fn write_trash_manifest(trash_dir: &FsPath, manifest: &TrashManifest) -> std::io::Result<()> {
     let data = serde_json::to_vec_pretty(manifest)?;
-    fs::write(trash_dir.join(TRASH_MANIFEST), data).await
+    let manifest_path = trash_dir.join(TRASH_MANIFEST);
+    // 原子写入：先写 tmp，再 rename，防止崩溃时 manifest 损坏
+    let tmp_path = trash_dir.join(format!(".{}.tmp", TRASH_MANIFEST));
+    fs::write(&tmp_path, data).await?;
+    fs::rename(&tmp_path, &manifest_path).await
 }
 
 /// 暂存一个文件操作
@@ -174,16 +178,19 @@ pub async fn apply_stage(
         return Err((StatusCode::FORBIDDEN, "read-only mode enabled".to_string()));
     }
 
-    let mut ops = state.staged_ops.write().await;
-    if ops.is_empty() {
-        return Ok((StatusCode::OK, Json(json!({"applied":0}))));
-    }
-
-    // 确保垃圾桶目录存在
-    let trash_dir = {
-        let pd = state.photos_dir.read().await.clone();
-        pd.join(".trash")
+    // 步骤1：拍快照（read lock，快速释放），用于冲突预检
+    let ops_snapshot = {
+        let ops = state.staged_ops.read().await;
+        if ops.is_empty() {
+            return Ok((StatusCode::OK, Json(json!({"applied":0}))));
+        }
+        ops.clone()
     };
+
+    // 步骤2：一次性读取 photos_dir，整个 apply 过程使用同一目录
+    let photos_dir = state.photos_dir.read().await.clone();
+    let trash_dir = photos_dir.join(".trash");
+
     if let Err(e) = fs::create_dir_all(&trash_dir).await {
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -191,19 +198,13 @@ pub async fn apply_stage(
         ));
     }
 
-    // 验证操作
-    for op in ops.iter() {
+    // 步骤3：冲突预检（同步 exists()，stat 系统调用，速度快，不持长锁）
+    for op in &ops_snapshot {
         match op.kind {
             OpKind::Move | OpKind::Rename | OpKind::Copy => {
                 if let Some(dst_rel) = &op.dst {
-                    let dst = {
-                        let pd = state.photos_dir.read().await.clone();
-                        pd.join(dst_rel)
-                    };
-                    let src = {
-                        let pd = state.photos_dir.read().await.clone();
-                        pd.join(&op.src)
-                    };
+                    let dst = photos_dir.join(dst_rel);
+                    let src = photos_dir.join(&op.src);
                     if dst.exists() && dst != src && !op.replace {
                         return Err((
                             StatusCode::CONFLICT,
@@ -216,16 +217,34 @@ pub async fn apply_stage(
         }
     }
 
+    // 步骤4：从队列中精确取出已验证的操作（write lock 仅用于 drain，立即释放）
+    // 验证期间新加入的操作不会被误取走，依然保留在队列中。
+    let ops: Vec<StagedOp> = {
+        // 用 String（owned）而非 &str，避免跨 .await 的生命周期问题
+        let snapshot_ids: HashSet<String> =
+            ops_snapshot.iter().map(|op| op.id.clone()).collect();
+        let mut guard = state.staged_ops.write().await;
+        let mut to_execute = Vec::with_capacity(ops_snapshot.len());
+        let mut remaining = Vec::new();
+        for op in guard.drain(..) {
+            if snapshot_ids.contains(op.id.as_str()) {
+                to_execute.push(op);
+            } else {
+                remaining.push(op);
+            }
+        }
+        *guard = remaining;
+        to_execute
+        // write lock 在此释放
+    };
+
+    // 步骤5：执行文件操作（不持任何锁）
     let mut applied = 0usize;
     let mut trash_manifest = read_trash_manifest(&trash_dir).await;
     let mut trash_manifest_dirty = false;
 
-    // 执行操作
-    for op in ops.drain(..) {
-        let src = {
-            let pd = state.photos_dir.read().await.clone();
-            pd.join(&op.src)
-        };
+    for op in ops {
+        let src = photos_dir.join(&op.src);
         match op.kind {
             OpKind::Delete => {
                 // 移动到垃圾桶：文件名使用无扩展名的 32 位 hex，避免被图片软件扫描到。
@@ -248,10 +267,7 @@ pub async fn apply_stage(
             OpKind::Restore => {
                 // src 是垃圾文件名, dst 是原始路径（可选）
                 if let Some(dst_rel) = op.dst {
-                    let dst = {
-                        let pd = state.photos_dir.read().await.clone();
-                        pd.join(&dst_rel)
-                    };
+                    let dst = photos_dir.join(&dst_rel);
                     if let Some(p) = dst.parent() {
                         let _ = fs::create_dir_all(p).await;
                     }
@@ -266,10 +282,7 @@ pub async fn apply_stage(
                     if let Some(name) = src.file_name() {
                         if let Some(s) = name.to_str() {
                             if let Some(entry) = trash_manifest.get(s) {
-                                let restored = {
-                                    let pd = state.photos_dir.read().await.clone();
-                                    pd.join(&entry.original)
-                                };
+                                let restored = photos_dir.join(&entry.original);
                                 if let Some(p) = restored.parent() {
                                     let _ = fs::create_dir_all(p).await;
                                 }
@@ -281,10 +294,7 @@ pub async fn apply_stage(
                             } else if s.len() > 37 && s.chars().nth(s.len() - 37) == Some('-') {
                                 // 兼容旧格式："path_to_file-{UUID}"。
                                 let orig_name = &s[..s.len() - 37];
-                                let restored = {
-                                    let pd = state.photos_dir.read().await.clone();
-                                    pd.join(orig_name.replace('_', "/"))
-                                };
+                                let restored = photos_dir.join(orig_name.replace('_', "/"));
                                 if let Some(p) = restored.parent() {
                                     let _ = fs::create_dir_all(p).await;
                                 }
@@ -298,10 +308,7 @@ pub async fn apply_stage(
             }
             OpKind::Move | OpKind::Rename => {
                 if let Some(dst_rel) = op.dst {
-                    let dst = {
-                        let pd = state.photos_dir.read().await.clone();
-                        pd.join(&dst_rel)
-                    };
+                    let dst = photos_dir.join(&dst_rel);
                     if op.replace && dst.exists() && dst != src {
                         let _ = fs::remove_file(&dst).await;
                     }
@@ -314,10 +321,7 @@ pub async fn apply_stage(
             }
             OpKind::Copy => {
                 if let Some(dst_rel) = op.dst {
-                    let dst = {
-                        let pd = state.photos_dir.read().await.clone();
-                        pd.join(&dst_rel)
-                    };
+                    let dst = photos_dir.join(&dst_rel);
                     if op.replace && dst.exists() && dst != src {
                         let _ = fs::remove_file(&dst).await;
                     }
@@ -353,13 +357,15 @@ pub async fn list_trash(
     };
     let mut items = Vec::new();
     let manifest = read_trash_manifest(&trash_dir).await;
-    if let Ok(entries) = std::fs::read_dir(&trash_dir) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
+    // 使用异步 read_dir，避免阻塞 tokio 工作线程
+    if let Ok(mut dir) = tokio::fs::read_dir(&trash_dir).await {
+        while let Ok(Some(entry)) = dir.next_entry().await {
+            let file_name = entry.file_name();
+            if let Some(name) = file_name.to_str() {
                 if name == TRASH_MANIFEST {
                     continue;
                 }
-                let original = manifest.get(name).map(|entry| entry.original.clone());
+                let original = manifest.get(name).map(|e| e.original.clone());
                 items.push(json!({"name": name, "original": original}));
             }
         }

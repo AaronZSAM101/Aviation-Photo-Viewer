@@ -69,13 +69,10 @@ pub async fn compare_photos(
     if !safe_subpath(a) || !safe_subpath(b) {
         return Err((StatusCode::BAD_REQUEST, "invalid path".into()));
     }
-    let pa = {
-        let pd = state.photos_dir.read().await.clone();
-        pd.join(a)
-    };
-    let pb = {
-        let pd = state.photos_dir.read().await.clone();
-        pd.join(b)
+    // 一次性读取 photos_dir，避免两次读取之间 set_photos_dir 导致 pa/pb 指向不同目录
+    let (pa, pb) = {
+        let pd = state.photos_dir.read().await;
+        (pd.join(a), pd.join(b))
     };
     let da = tokio::fs::read(&pa)
         .await
@@ -172,6 +169,24 @@ fn scan_workers() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(4)
         .clamp(1, 8)
+}
+
+/// 全局 Rayon 线程池单例：避免每次扫描都创建/销毁线程。
+/// 线程数在第一次调用时由 SIMILAR_SCAN_WORKERS 决定，之后固定不变。
+static SCAN_POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+
+fn get_scan_pool() -> &'static rayon::ThreadPool {
+    SCAN_POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(scan_workers())
+            .build()
+            .unwrap_or_else(|_| {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(4)
+                    .build()
+                    .expect("Failed to create fallback scan thread pool")
+            })
+    })
 }
 
 fn image_hash_from_image(img: &image::DynamicImage) -> ImageHash {
@@ -383,8 +398,6 @@ fn compute_missing_hashes(
 
     let processed = AtomicUsize::new(0);
     let unreadable = AtomicUsize::new(0);
-    let workers = scan_workers();
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(workers).build();
 
     let run = || {
         use rayon::prelude::*;
@@ -417,10 +430,8 @@ fn compute_missing_hashes(
             .collect::<Vec<_>>()
     };
 
-    let computed = match pool {
-        Ok(pool) => pool.install(run),
-        Err(_) => run(),
-    };
+    // 使用全局单例线程池，避免每次扫描都创建/销毁线程
+    let computed = get_scan_pool().install(run);
     let processed_total = processed.load(Ordering::Relaxed);
     let unreadable_total = unreadable.load(Ordering::Relaxed);
     update_job_opt(&job, |j| {

@@ -7,6 +7,22 @@ use axum::{
 use std::{collections::HashMap, path::PathBuf, time::UNIX_EPOCH};
 use tokio::fs;
 
+/// 缩略图缓存最大条目数（约 500 × 30KB ≈ 15MB）
+const MAX_THUMB_CACHE: usize = 500;
+/// 预览图缓存最大条目数（约 50 × 1MB ≈ 50MB）
+const MAX_PREVIEW_CACHE: usize = 50;
+
+/// 当缓存超出上限时驱逐条目（随机驱逐，简单有效）
+fn evict_cache<V>(cache: &mut HashMap<String, V>, max_size: usize) {
+    while cache.len() > max_size {
+        if let Some(key) = cache.keys().next().cloned() {
+            cache.remove(&key);
+        } else {
+            break;
+        }
+    }
+}
+
 use crate::exif::extract_exif;
 use crate::exif_edit::apply_exif_override;
 use crate::models::{AppState, CachedMeta, PhotoMeta, PhotosQuery};
@@ -167,7 +183,8 @@ pub async fn list_photos(
     //  - 立即返回列表（未命中的条目使用默认 EXIF），
     //  - 在后台异步提取并更新缓存以加速后续请求
     let to_extract_batch = to_extract;
-    let extracted = 0usize;
+    // 记录需后台提取的数量（移动进 spawn 前先捕获）
+    let bg_extract_count = to_extract_batch.len();
 
     if !to_extract_batch.is_empty() {
         let bg_items = to_extract_batch.clone();
@@ -268,10 +285,10 @@ pub async fn list_photos(
     }
 
     tracing::info!(
-        "list_photos: {} files, {} cached, {} extracted in {:?}",
+        "list_photos: {} files, {} cache hits, {} queued for bg extraction in {:?}",
         total,
         hits,
-        extracted,
+        bg_extract_count,
         started.elapsed()
     );
 
@@ -349,11 +366,11 @@ pub async fn serve_thumb(
     .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
     .map_err(|_| axum::http::StatusCode::UNPROCESSABLE_ENTITY)?;
 
-    state
-        .thumb_cache
-        .write()
-        .await
-        .insert(cache_key, (mtime, size, thumb_data.clone()));
+    {
+        let mut cache = state.thumb_cache.write().await;
+        cache.insert(cache_key, (mtime, size, thumb_data.clone()));
+        evict_cache(&mut cache, MAX_THUMB_CACHE);
+    }
 
     Ok(([(header::CONTENT_TYPE, "image/jpeg")], thumb_data))
 }
@@ -418,11 +435,11 @@ pub async fn serve_preview(
     .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
     .map_err(|_| axum::http::StatusCode::UNPROCESSABLE_ENTITY)?;
 
-    state
-        .preview_cache
-        .write()
-        .await
-        .insert(cache_key, (mtime, size, result.0.clone(), result.1.clone()));
+    {
+        let mut cache = state.preview_cache.write().await;
+        cache.insert(cache_key, (mtime, size, result.0.clone(), result.1.clone()));
+        evict_cache(&mut cache, MAX_PREVIEW_CACHE);
+    }
 
     Ok(([(header::CONTENT_TYPE, result.1)], result.0))
 }

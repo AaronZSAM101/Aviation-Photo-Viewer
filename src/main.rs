@@ -44,16 +44,47 @@ async fn persist_meta_cache_atomic(
     Ok(())
 }
 
+/// 等待进程退出信号：Unix 下同时监听 CTRL+C 和 SIGTERM（Docker/K8s 兼容），
+/// 其他平台仅监听 CTRL+C。
+async fn wait_for_shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        match signal(SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                tokio::select! {
+                    res = tokio::signal::ctrl_c() => {
+                        if let Err(e) = res {
+                            tracing::warn!("Failed to listen for ctrl-c: {}", e);
+                        }
+                    },
+                    _ = sigterm.recv() => {
+                        tracing::info!("Received SIGTERM");
+                    },
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to register SIGTERM handler: {}; falling back to ctrl-c only", e);
+                tokio::signal::ctrl_c().await.ok();
+            }
+        }
+        return;
+    }
+    #[cfg(not(unix))]
+    {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::warn!("Failed to listen for shutdown signal: {}", e);
+        }
+    }
+}
+
 async fn flush_caches_on_shutdown(
     meta_cache: Arc<RwLock<HashMap<String, photo_viewer::models::CachedMeta>>>,
     cache_path: PathBuf,
     exif_overrides: Arc<RwLock<HashMap<String, photo_viewer::models::ExifData>>>,
     exif_overrides_path: PathBuf,
 ) {
-    if let Err(e) = tokio::signal::ctrl_c().await {
-        tracing::warn!("Failed to listen for shutdown signal: {}", e);
-        return;
-    }
+    wait_for_shutdown_signal().await;
 
     tracing::info!("Shutdown signal received, flushing meta cache...");
     let snapshot = {

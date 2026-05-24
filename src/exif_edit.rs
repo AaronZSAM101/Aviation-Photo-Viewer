@@ -124,17 +124,21 @@ pub async fn update_exif(
         pd.join(".photo_viewer_exif_overrides.json")
     };
 
-    {
+    // 先更新内存 map，拍快照后立即释放写锁，再在锁外做文件 I/O
+    // 避免持写锁期间 list_photos 等读操作被长时间阻塞
+    let snapshot = {
         let mut overrides = state.exif_overrides.write().await;
         if is_empty_override(&req.exif) {
             overrides.remove(&req.src);
         } else {
             overrides.insert(req.src.clone(), req.exif.clone());
         }
+        overrides.clone()
+        // write lock 在此释放
+    };
 
-        if let Err(e) = persist_exif_overrides_atomic(&cache_path, &overrides).await {
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
-        }
+    if let Err(e) = persist_exif_overrides_atomic(&cache_path, &snapshot).await {
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
     }
 
     let sort_key = date_to_sort_key(req.exif.date_taken.as_deref());
