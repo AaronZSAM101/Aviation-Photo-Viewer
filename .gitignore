@@ -86,3 +86,4 @@ MobileBackups.trash
 tmbootpicker.efi
 
 deploy/
+.VSCodeCounter/
