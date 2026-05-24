@@ -65,9 +65,11 @@ jobs:
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version="${GITHUB_REF_NAME#v}"
             echo "arch_tags=${image}:${GITHUB_REF_NAME}-${{ matrix.arch }},${image}:${version}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+            echo "display_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           else
             datetime_tag="${{ needs.meta.outputs.datetime_tag }}"
             echo "arch_tags=${image}:${datetime_tag}-${{ matrix.arch }}" >> "$GITHUB_OUTPUT"
+            echo "display_tag=${datetime_tag}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Build and push
@@ -78,6 +80,8 @@ jobs:
           push: true
           platforms: ${{ matrix.platform }}
           tags: ${{ steps.tags.outputs.arch_tags }}
+          build-args: |
+            PHOTO_VIEWER_VERSION=${{ steps.tags.outputs.display_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

@@ -10,6 +10,7 @@ export const dom = {
   content:     $('content'),
   empty:       $('empty'),
   stats:       $('stats'),
+  appVersion:  $('app-version'),
   loading:     $('loading'),
   loadingMsg:  $('loading-msg'),
   compareBody: $('compare-body'),
@@ -57,6 +58,7 @@ export const state = {
   collapsedSections: new Set(),
   readOnly:    false,
   appVersion:  null,
+  appVersionSource: null,
   user:        null,
   email:       null,
 

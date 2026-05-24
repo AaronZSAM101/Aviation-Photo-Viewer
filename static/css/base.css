@@ -221,7 +221,9 @@ body{
 #prog{position:fixed;top:0;left:0;height:2px;background:var(--accent);box-shadow:0 0 12px var(--accent-glow);width:0;transition:width .2s;z-index:999;pointer-events:none}
 
 header{display:flex;align-items:center;gap:14px;padding:10px 18px;border-bottom:1px solid var(--border);background:color-mix(in srgb,var(--surface) 92%,transparent);box-shadow:0 1px 0 rgba(255,255,255,.03),0 12px 28px rgba(0,0,0,.16);backdrop-filter:blur(10px);flex-shrink:0;position:sticky;top:0;z-index:100;flex-wrap:wrap}
+.brand{display:flex;flex-direction:column;align-items:flex-start;gap:2px;min-width:0;flex-shrink:0}
 .logo{font-family:var(--mono);font-size:14px;font-weight:var(--mono-weight);letter-spacing:.14em;color:var(--accent);text-shadow:0 0 14px var(--accent-glow);white-space:nowrap;flex-shrink:0}
+.app-version{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:10px;line-height:1.1;color:var(--muted);letter-spacing:0}
 .toolbar{display:flex;align-items:center;gap:10px;flex:1;flex-wrap:wrap}
 .sep{width:1px;height:18px;background:var(--border2);flex-shrink:0}
 .lbl{color:var(--muted);font-size:11px;white-space:nowrap}
@@ -246,4 +248,3 @@ input[type="text"]:focus,input[type="search"]:focus{outline:none;border-color:va
 #loading{display:none;position:fixed;inset:0;background:var(--overlay-soft);z-index:300;align-items:center;justify-content:center;flex-direction:column;gap:14px;color:var(--muted);font-size:13px}
 #loading.show{display:flex}
 .spinner{width:32px;height:32px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
-

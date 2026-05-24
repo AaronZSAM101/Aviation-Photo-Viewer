@@ -3,41 +3,43 @@ use std::{env, process::Command};
 fn main() {
     println!("cargo:rerun-if-changed=.git/HEAD");
     println!("cargo:rerun-if-changed=.git/refs/heads");
+    println!("cargo:rerun-if-env-changed=PHOTO_VIEWER_VERSION");
 
     if let Ok(p) = env::var("DEFAULT_PHOTOS_DIR") {
         println!("cargo:rustc-env=DEFAULT_PHOTOS_DIR={}", p);
     }
 
-    println!("cargo:rustc-env=PHOTO_VIEWER_VERSION={}", build_version());
+    let (version, source) = build_version();
+    println!("cargo:rustc-env=PHOTO_VIEWER_VERSION={}", version);
+    println!("cargo:rustc-env=PHOTO_VIEWER_VERSION_SOURCE={}", source);
 }
 
-fn build_version() -> String {
-    let date = build_date().unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-    match git_short_sha() {
-        Some(sha) => format!("{date}+{sha}"),
-        None => date,
+fn build_version() -> (String, &'static str) {
+    if let Ok(version) = env::var("PHOTO_VIEWER_VERSION") {
+        let version = version.trim();
+        if !version.is_empty() {
+            return (version.to_string(), "ghcr");
+        }
     }
+
+    let timestamp = build_timestamp().unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    let version = match git_short_sha() {
+        Some(sha) => format!("local-{timestamp}+{sha}"),
+        None => format!("local-{timestamp}"),
+    };
+    (version, "local")
 }
 
-fn build_date() -> Option<String> {
-    let output = Command::new("date").arg("+%Y.%m.%d").output().ok()?;
+fn build_timestamp() -> Option<String> {
+    let output = Command::new("date").arg("+%Y%m%d-%H%M%S").output().ok()?;
     if !output.status.success() {
         return None;
     }
-    let raw = String::from_utf8(output.stdout).ok()?;
-    let parts: Vec<String> = raw
-        .trim()
-        .split('.')
-        .map(|part| {
-            part.parse::<u32>()
-                .map(|n| n.to_string())
-                .unwrap_or_else(|_| part.to_string())
-        })
-        .collect();
-    if parts.len() == 3 {
-        Some(parts.join("."))
-    } else {
+    let timestamp = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    if timestamp.is_empty() {
         None
+    } else {
+        Some(timestamp)
     }
 }
 

@@ -42,6 +42,18 @@ function applyReadOnlyUI() {
   ].forEach(id => setHidden(id, hidden));
 }
 
+function applyVersionUI() {
+  if (!dom.appVersion) return;
+  if (!state.appVersion) {
+    dom.appVersion.textContent = '版本未知';
+    dom.appVersion.title = '当前版本未知';
+    return;
+  }
+  const sourceLabel = state.appVersionSource === 'ghcr' ? 'GHCR' : '本地';
+  dom.appVersion.textContent = state.appVersion;
+  dom.appVersion.title = `${sourceLabel} 版本：${state.appVersion}`;
+}
+
 export async function loadConfig() {
   try {
     const res = await fetch('/api/config', { cache: 'no-store' });
@@ -49,9 +61,11 @@ export async function loadConfig() {
     const config = await res.json();
     state.readOnly = !!config.readOnly;
     state.appVersion = config.version || null;
+    state.appVersionSource = config.versionSource || null;
     state.user = config.user || null;
     state.email = config.email || null;
     applyReadOnlyUI();
+    applyVersionUI();
   } catch (e) {
     state.readOnly = false;
   }

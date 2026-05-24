@@ -4,9 +4,16 @@
     gap:8px;
     top:0;
   }
+  .brand{
+    max-width:100%;
+  }
   .logo{
     font-size:12px;
     letter-spacing:.06em;
+  }
+  .app-version{
+    max-width:180px;
+    font-size:9px;
   }
   .toolbar{
     width:100%;
@@ -377,4 +384,3 @@
   #vinfo .vinfo-sections{flex:1 1 0;min-height:0;min-width:0;overflow-y:auto;width:100%}
   #vstage.info-open{padding-bottom:0}
 }
-

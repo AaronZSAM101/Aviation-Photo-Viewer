@@ -58,6 +58,7 @@ pub async fn app_config(
     Json(serde_json::json!({
         "readOnly": state.read_only,
         "version": env!("PHOTO_VIEWER_VERSION"),
+        "versionSource": env!("PHOTO_VIEWER_VERSION_SOURCE"),
         "user": user,
         "email": email,
     }))
