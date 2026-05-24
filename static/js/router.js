@@ -1,5 +1,6 @@
 import { dom, state, $ } from './state.js';
 import { encodePath, subpath } from './utils.js';
+import { loadBrowsePreferences, syncBrowseControls } from './preferences.js';
 
 let initialViewerSubpath = null;
 
@@ -17,6 +18,8 @@ function writeStateParam(params, key, value, defaultValue) {
 }
 
 export function applyRouteStateFromLocation() {
+  loadBrowsePreferences();
+
   const url = new URL(window.location.href);
   const params = url.searchParams;
 
@@ -26,14 +29,9 @@ export function applyRouteStateFromLocation() {
   state.searchTerm = params.get('q') || state.searchTerm;
   state.collapseAll = readBoolParam(params, 'collapse');
 
-  const sortSel = $('sort-sel');
-  const viewModeSel = $('view-mode-sel');
-  const timeScaleSel = $('time-scale-sel');
   const searchBox = $('search-box');
 
-  if (sortSel) sortSel.value = state.currentSort;
-  if (viewModeSel) viewModeSel.value = state.baseView;
-  if (timeScaleSel) timeScaleSel.value = state.timeScale;
+  syncBrowseControls();
   if (searchBox) searchBox.value = state.searchTerm;
 
   const viewPrefix = '/view/';

@@ -21,6 +21,7 @@ import { openFileOpDialog, commitFileOp, openBulkMoveDialog, commitBulkMove } fr
 import { openExifEditDialog, commitExifEdit } from './exif-edit.js';
 import { openCompareDialog } from './compare.js';
 import { syncSelectionUI } from './selection.js';
+import { saveBrowsePreferences } from './preferences.js';
 
 function openShortcutsModal() {
   $('modal-shortcuts').classList.add('show');
@@ -127,6 +128,7 @@ export function bindAllEvents() {
   // ── 顶部 toolbar ──────────────────────────────────────────────────────
   $('sort-sel').addEventListener('change', e => {
     state.currentSort = e.target.value;
+    saveBrowsePreferences();
     loadPhotos();
     syncRoute();
   });
@@ -142,11 +144,13 @@ export function bindAllEvents() {
   });
   $('view-mode-sel').addEventListener('change', e => {
     state.baseView = e.target.value;
+    saveBrowsePreferences();
     render();
     syncRoute();
   });
   $('time-scale-sel').addEventListener('change', e => {
     state.timeScale = e.target.value;
+    saveBrowsePreferences();
     render();
     syncRoute();
   });
