@@ -1,4 +1,4 @@
-# ── Stage 1: Build ────────────────────────────────────────────────────────────
+# ── Stage 1: Build ─────────────────────────────────────────────────────────────
 FROM rust:1.91-slim-trixie AS builder
 
 WORKDIR /app
@@ -18,6 +18,8 @@ RUN mkdir -p src && \
 # Build the real binary
 COPY src    ./src
 COPY static ./static
+ARG PHOTO_VIEWER_VERSION
+ENV PHOTO_VIEWER_VERSION=${PHOTO_VIEWER_VERSION}
 RUN touch src/main.rs && cargo build --release --locked
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
