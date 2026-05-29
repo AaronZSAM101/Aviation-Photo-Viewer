@@ -17,6 +17,21 @@ function writeStateParam(params, key, value, defaultValue) {
   params.set(key, value);
 }
 
+function readSetParam(params, key) {
+  return new Set(params.getAll(key).filter(Boolean));
+}
+
+function writeSetParam(params, key, values) {
+  params.delete(key);
+  [...values].filter(Boolean).sort().forEach(value => params.append(key, value));
+}
+
+function getRenderedSectionKeys() {
+  return [...dom.content.querySelectorAll('.folder-section[data-section-key]')]
+    .map(sec => sec.dataset.sectionKey)
+    .filter(Boolean);
+}
+
 export function applyRouteStateFromLocation() {
   loadBrowsePreferences();
 
@@ -28,6 +43,8 @@ export function applyRouteStateFromLocation() {
   state.timeScale = params.get('scale') || state.timeScale;
   state.searchTerm = params.get('q') || state.searchTerm;
   state.collapseAll = readBoolParam(params, 'collapse');
+  state.collapsedSections = readSetParam(params, 'closed');
+  state.expandedSections = readSetParam(params, 'open');
 
   const searchBox = $('search-box');
 
@@ -56,8 +73,25 @@ export function syncRoute() {
   writeStateParam(params, 'view', state.baseView, 'flat');
   writeStateParam(params, 'scale', state.timeScale, 'none');
   writeStateParam(params, 'q', state.searchTerm.trim(), '');
-  if (state.collapseAll) params.set('collapse', '1');
-  else params.delete('collapse');
+  params.delete('collapse');
+  params.delete('open');
+  params.delete('closed');
+
+  const sectionKeys = getRenderedSectionKeys();
+  const sectionKeySet = new Set(sectionKeys);
+  const collapsedSections = sectionKeys.length
+    ? new Set([...state.collapsedSections].filter(key => sectionKeySet.has(key)))
+    : state.collapsedSections;
+  const expandedSections = sectionKeys.length
+    ? new Set([...state.expandedSections].filter(key => sectionKeySet.has(key)))
+    : state.expandedSections;
+
+  if (state.collapseAll) {
+    params.set('collapse', '1');
+    writeSetParam(params, 'open', expandedSections);
+  } else {
+    writeSetParam(params, 'closed', collapsedSections);
+  }
 
   const viewerSp = dom.viewer.classList.contains('show') ? currentViewerSubpath() : null;
   const nextPath = viewerSp ? `/view/${encodePath(viewerSp)}` : '/';

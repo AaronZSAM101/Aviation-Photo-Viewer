@@ -525,7 +525,7 @@ JPG · PNG · WebP · TIFF
 date-asc / date-desc / name-asc / name-desc / size-desc
 ```
 
-查看器路由会把当前状态写入 URL 查询参数，例如 `sort`、`view`、`scale`、`q`、`collapse`。
+查看器路由会把当前状态写入 URL 查询参数，例如 `sort`、`view`、`scale`、`q`、`collapse`、`open`、`closed`。
 
 ### 本地开发
 

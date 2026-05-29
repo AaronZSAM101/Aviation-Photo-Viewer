@@ -7,6 +7,7 @@ import {
   syncSelectionUI, getSelectionAnchorIndex, selectRangeByIndex, toggleSelectionAtIndex,
 } from './selection.js';
 import { openViewer } from './viewer.js';
+import { syncRoute } from './router.js';
 
 let lazyObserver = null;
 
@@ -137,7 +138,9 @@ export function render() {
 
 // ── 折叠区块 ──────────────────────────────────────────────────────────────
 function makeSection(label, icon, count, key) {
-  const collapsed = state.collapseAll || (key && state.collapsedSections.has(key));
+  const collapsed = state.collapseAll
+    ? !(key && state.expandedSections.has(key))
+    : !!(key && state.collapsedSections.has(key));
   const sec = document.createElement('div');
   sec.className = 'folder-section' + (collapsed ? ' collapsed' : '');
   if (key) sec.dataset.sectionKey = key;
@@ -167,11 +170,13 @@ function wireSectionToggles() {
         else           state.collapsedSections.delete(key);
       }
       syncCollapseStateFromDOM();
+      syncRoute();
     });
   });
 }
 
 export function applyCollapseStateToSections() {
+  state.expandedSections.clear();
   if (state.collapseAll) {
     state.collapsedSections = new Set(
       [...dom.content.querySelectorAll('.folder-section[data-section-key]')]
@@ -192,13 +197,29 @@ export function applyCollapseStateToSections() {
 
 function syncCollapseStateFromDOM() {
   const sections = [...dom.content.querySelectorAll('.folder-section')];
-  if (!sections.length) state.collapseAll = false;
-  else                  state.collapseAll = sections.every(sec => sec.classList.contains('collapsed'));
-  state.collapsedSections = new Set(
-    sections
-      .filter(sec => sec.classList.contains('collapsed') && sec.dataset.sectionKey)
-      .map(sec => sec.dataset.sectionKey)
-  );
+  const collapsedKeys = sections
+    .filter(sec => sec.classList.contains('collapsed') && sec.dataset.sectionKey)
+    .map(sec => sec.dataset.sectionKey);
+  const expandedKeys = sections
+    .filter(sec => !sec.classList.contains('collapsed') && sec.dataset.sectionKey)
+    .map(sec => sec.dataset.sectionKey);
+
+  if (!sections.length) {
+    state.collapseAll = false;
+    state.collapsedSections.clear();
+    state.expandedSections.clear();
+  } else if (!expandedKeys.length) {
+    state.collapseAll = true;
+    state.collapsedSections = new Set(collapsedKeys);
+    state.expandedSections.clear();
+  } else if (state.collapseAll) {
+    state.expandedSections = new Set(expandedKeys);
+    state.collapsedSections = new Set(collapsedKeys);
+  } else {
+    state.collapseAll = false;
+    state.collapsedSections = new Set(collapsedKeys);
+    state.expandedSections.clear();
+  }
   refreshCollapseButton();
 }
 

@@ -56,6 +56,7 @@ export const state = {
   timeScale:   'none',
   collapseAll: false,
   collapsedSections: new Set(),
+  expandedSections:  new Set(),
   readOnly:    false,
   appVersion:  null,
   appVersionSource: null,
