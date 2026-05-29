@@ -4,7 +4,7 @@ import { subpath } from './utils.js';
 import {
   loadPhotos, fetchStagedOps, stageBulkDelete, stageSingleDelete,
   applyStaged, clearAllStaged, refreshStagedList, removeStagedOp,
-  showStagedList, showTrash, stageRestore, closeModal,
+  showStagedList, showTrash, stageRestore, closeModal, refreshCachesAndLoadPhotos,
 } from './api.js';
 import { syncRoute } from './router.js';
 import {
@@ -133,7 +133,7 @@ export function bindAllEvents() {
     syncRoute();
   });
   $('btn-reload').addEventListener('click', () => {
-    loadPhotos();
+    refreshCachesAndLoadPhotos();
     syncRoute();
   });
   $('btn-collapse').addEventListener('click', () => {

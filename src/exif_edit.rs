@@ -4,6 +4,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use crate::utils::safe_subpath;
 use crate::{
+    cache_paths,
     exif::date_to_sort_key,
     models::{AppState, ExifData},
 };
@@ -90,6 +91,11 @@ pub async fn persist_exif_overrides_atomic(
     );
     let tmp_path = path.with_file_name(tmp_name);
 
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("create exif overrides dir failed: {e}"))?;
+    }
     tokio::fs::write(&tmp_path, &buf)
         .await
         .map_err(|e| format!("write temp exif overrides failed: {e}"))?;
@@ -121,7 +127,7 @@ pub async fn update_exif(
 
     let cache_path = {
         let pd = state.photos_dir.read().await.clone();
-        pd.join(".photo_viewer_exif_overrides.json")
+        cache_paths::exif_overrides(&pd)
     };
 
     // 先更新内存 map，拍快照后立即释放写锁，再在锁外做文件 I/O

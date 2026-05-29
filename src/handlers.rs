@@ -50,6 +50,37 @@ fn date_asc_sort_key(photo: &PhotoMeta) -> i64 {
     }
 }
 
+fn clean_lens_value(value: &serde_json::Value) -> Option<String> {
+    let value = match value {
+        serde_json::Value::String(s) => s.trim(),
+        serde_json::Value::Number(n) => return Some(n.to_string()),
+        _ => return None,
+    };
+    if value.is_empty() || value == "(null)" {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn lens_model_from_exiftool(path: &std::path::Path) -> Option<String> {
+    let output = std::process::Command::new("exiftool")
+        .args(["-j", "-LensModel", "-Lens", "-Composite:LensID"])
+        .arg(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let docs: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).ok()?;
+    let obj = docs.first()?.as_object()?;
+    ["LensModel", "Lens", "LensID"]
+        .iter()
+        .find_map(|key| obj.get(*key).and_then(clean_lens_value))
+}
+
+use crate::cache_paths;
 use crate::exif::extract_exif;
 use crate::exif_edit::apply_exif_override;
 use crate::models::{AppState, CachedMeta, PhotoMeta, PhotosQuery};
@@ -89,6 +120,91 @@ pub async fn app_config(
         "user": user,
         "email": email,
     }))
+}
+
+/// 手动刷新派生缓存：立即清空缩略图/预览缓存，移除磁盘元数据缓存，并在后台重建元数据缓存。
+pub async fn refresh_caches(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let started = std::time::Instant::now();
+    let photos_dir = state.photos_dir.read().await.clone();
+    let cache_file = cache_paths::meta_cache(&photos_dir);
+    let legacy_cache_file = cache_paths::legacy_meta_cache(&photos_dir);
+
+    {
+        state.thumb_cache.write().await.clear();
+        state.preview_cache.write().await.clear();
+    }
+
+    match fs::remove_file(&cache_file).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!("Failed to remove meta cache file during refresh: {}", e),
+    }
+    match fs::remove_file(&legacy_cache_file).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!(
+            "Failed to remove legacy meta cache file during refresh: {}",
+            e
+        ),
+    }
+
+    let bg_state = state.clone();
+    tokio::spawn(async move {
+        let entries =
+            tokio::task::spawn_blocking(move || collect_photo_entries(photos_dir, None).0)
+                .await
+                .unwrap_or_default();
+        let total = entries.len();
+
+        let rebuilt: Result<Vec<(String, CachedMeta)>, _> =
+            tokio::task::spawn_blocking(move || {
+                use rayon::prelude::*;
+
+                entries
+                    .into_par_iter()
+                    .map(|e| {
+                        let (mut exif, sort_key) = extract_exif(&e.path);
+                        if exif.image_width.is_none() || exif.image_height.is_none() {
+                            if let Ok((w, h)) = image::image_dimensions(&e.path) {
+                                exif.image_width = Some(w);
+                                exif.image_height = Some(h);
+                            }
+                        }
+                        (
+                            e.subpath,
+                            CachedMeta {
+                                mtime: e.mtime,
+                                size: e.size,
+                                exif,
+                                sort_key,
+                            },
+                        )
+                    })
+                    .collect()
+            })
+            .await;
+
+        if let Ok(rebuilt) = rebuilt {
+            let mut cache = bg_state.meta_cache.write().await;
+            cache.clear();
+            for (subpath, meta) in rebuilt {
+                cache.insert(subpath, meta);
+            }
+            tracing::info!(
+                "refresh_caches: rebuilt metadata for {} files in {:?}",
+                total,
+                started.elapsed()
+            );
+        }
+    });
+
+    Ok(Json(serde_json::json!({
+        "ok": true,
+        "rebuilding": true,
+        "elapsed_ms": started.elapsed().as_millis(),
+    })))
 }
 
 /// 返回前端 index.html
@@ -154,6 +270,7 @@ pub async fn lens_model_for_photo(
             } else {
                 Some(value)
             }
+            .or_else(|| lens_model_from_exiftool(&path))
         })
         .await
         .ok()
@@ -520,7 +637,10 @@ pub async fn set_photos_dir(
     state.preview_cache.write().await.clear();
 
     // 加载新的 exif_overrides（如果存在）
-    let overrides_path = p.join(".photo_viewer_exif_overrides.json");
+    let overrides_path = cache_paths::preferred_existing(
+        cache_paths::exif_overrides(&p),
+        cache_paths::legacy_exif_overrides(&p),
+    );
     let overrides = crate::exif_edit::load_exif_overrides(&overrides_path).await;
     {
         let mut g = state.exif_overrides.write().await;

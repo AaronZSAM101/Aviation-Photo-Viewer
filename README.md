@@ -619,7 +619,10 @@ photo-viewer/
 - 图片列表扫描时按 `mtime` 和 `size` 缓存 EXIF 元数据。
 - 相似照片扫描会复用照片目录扫描逻辑，并把结果写入后台任务进度。
 - 如设置 `PHASH_WARMUP=true`，打开照片列表后会复用同一次目录扫描结果，在后台预热相似照片所需的感知哈希缓存；默认关闭，避免普通浏览时持续读取原图。
-- 相似照片扫描时按 `mtime` 和 `size` 复用感知哈希，缓存文件为 `.photo_viewer_hash_cache.json`。
+- 运行时状态统一存放在照片根目录的 `.photo_viewer/` 下：
+  - `meta.json`：照片 EXIF / 排序元数据缓存。
+  - `hash_cache.json`：相似照片扫描的感知哈希缓存，按 `mtime` 和 `size` 复用。
+  - `exif_overrides.json`：手动编辑的 EXIF 覆盖值；这是用户数据，不应被“刷新缓存”删除。
 - 首次计算感知哈希时会用有限并发加速，默认 `SIMILAR_SCAN_WORKERS=4`；如果缩略图已经在内存缓存中，会优先用缩略图计算，减少原图解码成本。
 - 缩略图和预览图会缓存在内存中。
 - 前端使用 Intersection Observer，只加载接近视口的图片。

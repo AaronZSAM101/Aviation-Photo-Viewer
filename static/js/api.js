@@ -100,6 +100,30 @@ export async function loadPhotos() {
   }
 }
 
+export async function refreshCachesAndLoadPhotos() {
+  dom.loading.classList.add('show');
+  dom.loadingMsg.textContent = '刷新缓存…';
+  dom.prog.style.width = '20%';
+  try {
+    const res = await fetch('/api/cache/refresh', {
+      method: 'POST',
+      cache: 'no-store',
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || '刷新缓存失败');
+    }
+    dom.prog.style.width = '70%';
+    await loadPhotos();
+  } catch (e) {
+    dom.loadingMsg.textContent = '刷新缓存失败: ' + e.message;
+    setTimeout(() => {
+      dom.loading.classList.remove('show');
+      dom.prog.style.width = '0';
+    }, 1200);
+  }
+}
+
 export async function fetchStagedOps() {
   try {
     const res  = await fetch('/api/stage/list', { cache: 'no-store' });

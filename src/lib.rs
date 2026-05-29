@@ -1,3 +1,4 @@
+pub mod cache_paths;
 pub mod exif;
 pub mod exif_edit;
 pub mod file_ops;

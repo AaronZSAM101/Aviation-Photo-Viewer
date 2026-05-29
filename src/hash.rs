@@ -16,6 +16,7 @@ use std::{
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
+use crate::cache_paths;
 use crate::models::{AppState, CachedHash, PhotoEntry, SimilarScanJob};
 use crate::utils::{
     aspect_milli, collect_photo_entries, compute_ahash, compute_color_sig, compute_dhash,
@@ -360,6 +361,12 @@ async fn persist_hash_cache(cache_path: PathBuf, cache: HashMap<String, CachedHa
                     .and_then(|s| s.to_str())
                     .unwrap_or("photo_viewer_hash_cache.json")
             ));
+            if let Some(parent) = cache_path.parent() {
+                if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                    tracing::warn!("Failed to create hash cache dir: {}", e);
+                    return;
+                }
+            }
             if let Err(e) = tokio::fs::write(&tmp_path, buf).await {
                 tracing::warn!("Failed to write hash cache: {}", e);
                 return;
@@ -501,7 +508,7 @@ pub fn spawn_phash_warmup(state: AppState, entries: Vec<PhotoEntry>) {
 
     tokio::spawn(async move {
         let photos_dir = state.photos_dir.read().await.clone();
-        let cache_path = photos_dir.join(".photo_viewer_hash_cache.json");
+        let cache_path = cache_paths::hash_cache(&photos_dir);
         let cache_snapshot = state.phash_cache.read().await.clone();
         let thumb_snapshot = state.thumb_cache.read().await.clone();
         let cache_handle = state.phash_cache.clone();
@@ -542,7 +549,7 @@ pub async fn find_similar_photos(
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
     let max_photos = q.max_photos.unwrap_or(2000).clamp(2, 10000);
     let photos_dir = state.photos_dir.read().await.clone();
-    let cache_path = photos_dir.join(".photo_viewer_hash_cache.json");
+    let cache_path = cache_paths::hash_cache(&photos_dir);
     let cache_snapshot = state.phash_cache.read().await.clone();
     let thumb_snapshot = state.thumb_cache.read().await.clone();
 
@@ -744,7 +751,7 @@ pub async fn start_similar_scan_job(
     }
 
     let photos_dir = state.photos_dir.read().await.clone();
-    let cache_path = photos_dir.join(".photo_viewer_hash_cache.json");
+    let cache_path = cache_paths::hash_cache(&photos_dir);
     let cache_snapshot = state.phash_cache.read().await.clone();
     let thumb_snapshot = state.thumb_cache.read().await.clone();
     let cache_handle: Arc<RwLock<HashMap<String, CachedHash>>> = state.phash_cache.clone();

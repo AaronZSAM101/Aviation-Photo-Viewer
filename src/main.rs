@@ -6,7 +6,7 @@ use axum_server::{tls_rustls::RustlsConfig, Handle};
 use std::{collections::HashMap, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 
-use photo_viewer::{exif_edit, file_ops, handlers, hash, models::AppState};
+use photo_viewer::{cache_paths, exif_edit, file_ops, handlers, hash, models::AppState};
 
 fn env_flag(name: &str) -> bool {
     matches!(
@@ -35,6 +35,11 @@ async fn persist_meta_cache_atomic(
     );
     let tmp_path = cache_path.with_file_name(tmp_name);
 
+    if let Some(parent) = cache_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("create cache dir failed: {e}"))?;
+    }
     tokio::fs::write(&tmp_path, &buf)
         .await
         .map_err(|e| format!("write temp cache failed: {e}"))?;
@@ -170,13 +175,17 @@ async fn main() {
         exif_overrides: Arc::new(RwLock::new(HashMap::new())),
     };
 
-    // 尝试从磁盘加载持久化的 meta_cache（位于照片根目录下 .photo_viewer_meta.json）
+    // 尝试从磁盘加载持久化的 meta_cache（位于照片根目录下 .photo_viewer/meta.json）
     let cache_file = {
         let pd = state.photos_dir.read().await.clone();
-        pd.join(".photo_viewer_meta.json")
+        cache_paths::meta_cache(&pd)
     };
-    if cache_file.exists() {
-        match tokio::fs::read_to_string(&cache_file).await {
+    let cache_load_file = {
+        let pd = state.photos_dir.read().await.clone();
+        cache_paths::preferred_existing(cache_file.clone(), cache_paths::legacy_meta_cache(&pd))
+    };
+    if cache_load_file.exists() {
+        match tokio::fs::read_to_string(&cache_load_file).await {
             Ok(s) => {
                 match serde_json::from_str::<HashMap<String, photo_viewer::models::CachedMeta>>(&s)
                 {
@@ -187,7 +196,7 @@ async fn main() {
                         }
                         tracing::info!(
                             "Loaded meta_cache from {} ({} entries)",
-                            cache_file.display(),
+                            cache_load_file.display(),
                             cache_guard.len()
                         );
                     }
@@ -201,7 +210,10 @@ async fn main() {
     // 感知哈希缓存（用于相似照片扫描，避免每次重算全量原图）
     let hash_cache_file = {
         let pd = state.photos_dir.read().await.clone();
-        pd.join(".photo_viewer_hash_cache.json")
+        cache_paths::preferred_existing(
+            cache_paths::hash_cache(&pd),
+            cache_paths::legacy_hash_cache(&pd),
+        )
     };
     if hash_cache_file.exists() {
         match tokio::fs::read_to_string(&hash_cache_file).await {
@@ -224,19 +236,26 @@ async fn main() {
         }
     }
 
-    // 人工编辑后的 EXIF 覆盖值（位于照片根目录下 .photo_viewer_exif_overrides.json）
+    // 人工编辑后的 EXIF 覆盖值（位于照片根目录下 .photo_viewer/exif_overrides.json）
     let exif_override_file = {
         let pd = state.photos_dir.read().await.clone();
-        pd.join(".photo_viewer_exif_overrides.json")
+        cache_paths::exif_overrides(&pd)
+    };
+    let exif_override_load_file = {
+        let pd = state.photos_dir.read().await.clone();
+        cache_paths::preferred_existing(
+            exif_override_file.clone(),
+            cache_paths::legacy_exif_overrides(&pd),
+        )
     };
     {
-        let overrides = exif_edit::load_exif_overrides(&exif_override_file).await;
+        let overrides = exif_edit::load_exif_overrides(&exif_override_load_file).await;
         if !overrides.is_empty() {
             let mut guard = state.exif_overrides.write().await;
             *guard = overrides;
             tracing::info!(
                 "Loaded exif overrides from {} ({} entries)",
-                exif_override_file.display(),
+                exif_override_load_file.display(),
                 guard.len()
             );
         }
@@ -308,6 +327,7 @@ async fn main() {
         .route("/view/*path", get(handlers::serve_frontend))
         .route("/static/*path", get(handlers::serve_static))
         .route("/api/config", get(handlers::app_config))
+        .route("/api/cache/refresh", post(handlers::refresh_caches))
         .route("/api/photos", get(handlers::list_photos))
         .route("/photos/*subpath", get(handlers::serve_photo))
         .route("/preview/*subpath", get(handlers::serve_preview))
