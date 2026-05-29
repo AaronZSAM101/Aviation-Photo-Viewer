@@ -4,7 +4,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     Json,
 };
-use std::{collections::HashMap, path::PathBuf, time::UNIX_EPOCH};
+use std::{collections::HashMap, path::PathBuf};
 use tokio::fs;
 
 /// 缩略图缓存最大条目数（约 500 × 30KB ≈ 15MB）
@@ -23,10 +23,37 @@ fn evict_cache<V>(cache: &mut HashMap<String, V>, max_size: usize) {
     }
 }
 
+fn has_display_exif(exif: &crate::models::ExifData) -> bool {
+    exif.date_taken.is_some()
+        || exif.make.is_some()
+        || exif.model.is_some()
+        || exif.lens_model.is_some()
+        || exif.software.is_some()
+        || exif.iso.is_some()
+        || exif.exposure_time.is_some()
+        || exif.f_number.is_some()
+        || exif.focal_length.is_some()
+        || exif.focal_length_35mm.is_some()
+        || exif.gps_lat.is_some()
+        || exif.gps_lon.is_some()
+        || exif.flash.is_some()
+        || exif.white_balance.is_some()
+        || exif.metering_mode.is_some()
+        || exif.exposure_bias.is_some()
+}
+
+fn date_asc_sort_key(photo: &PhotoMeta) -> i64 {
+    if photo.date_sort_key == 0 {
+        i64::MAX
+    } else {
+        photo.date_sort_key
+    }
+}
+
 use crate::exif::extract_exif;
 use crate::exif_edit::apply_exif_override;
 use crate::models::{AppState, CachedMeta, PhotoMeta, PhotosQuery};
-use crate::utils::{collect_photo_entries, safe_subpath};
+use crate::utils::{collect_photo_entries, metadata_mtime_key, safe_subpath};
 
 /// 把整个 static/ 目录嵌入二进制（编译期）
 #[derive(rust_embed::RustEmbed)]
@@ -162,7 +189,8 @@ pub async fn list_photos(
     };
 
     // 步骤2：分离缓存命中和需要提取的条目
-    // 缓存key = subpath; 当 (mtime, size) 改变时失效
+    // 缓存key = subpath; 当 (mtime, size) 改变时失效。
+    // mtime 使用微秒级指纹，避免同一秒内覆盖文件时继续复用旧 EXIF。
     let mut hits = 0usize;
     let mut to_extract: Vec<(usize, PathBuf, String, u64, u64)> = Vec::new();
     let mut cached: HashMap<usize, (crate::models::ExifData, i64)> =
@@ -175,7 +203,17 @@ pub async fn list_photos(
                     cached.insert(i, (c.exif.clone(), c.sort_key));
                     hits += 1;
                 }
-                _ => to_extract.push((i, e.path.clone(), e.subpath.clone(), e.mtime, e.size)),
+                Some(c) => {
+                    // 旧版本持久化的是秒级 mtime；升级到微秒级后会全量失效。
+                    // 若旧缓存里已有可展示 EXIF，先返回它，避免刷新时整页短暂变成 NO EXIF；
+                    // 后台仍会重新提取并写回新指纹。旧缓存本身无 EXIF 时不复用，
+                    // 这样覆盖写入了 EXIF 的照片能在后台刷新后显示新数据。
+                    if has_display_exif(&c.exif) {
+                        cached.insert(i, (c.exif.clone(), c.sort_key));
+                    }
+                    to_extract.push((i, e.path.clone(), e.subpath.clone(), e.mtime, e.size));
+                }
+                None => to_extract.push((i, e.path.clone(), e.subpath.clone(), e.mtime, e.size)),
             }
         }
     }
@@ -252,7 +290,7 @@ pub async fn list_photos(
         .map(|(i, e)| {
             // 缓存未命中时（新文件 / 重命名后 / EXIF 还在后台异步提取），
             // 返回 sort_key=0 作为占位。前端的 timeGroupOf 用 `if (!k)` 判断后
-            // 会归到「未知日期」组；之前曾误用 `e.mtime`（Unix 时间戳，10 位），
+            // 会归到「未知日期」组；之前曾误用 `e.mtime`（文件修改时间），
             // 让前端按 14 位 YYYYMMDDHHMMSS 解析后显示成 "0000 年 17 月"。
             let (exif, _cached_sort_key) = match cached.remove(&i) {
                 Some((exif, sk)) => (exif, sk),
@@ -279,7 +317,7 @@ pub async fn list_photos(
         "name-asc" => photos.sort_by(|a, b| a.filename.cmp(&b.filename)),
         "name-desc" => photos.sort_by(|a, b| b.filename.cmp(&a.filename)),
         "size-desc" => photos.sort_by(|a, b| b.size.cmp(&a.size)),
-        _ => photos.sort_by_key(|p| p.date_sort_key), // date-asc 默认
+        _ => photos.sort_by_key(date_asc_sort_key), // date-asc 默认；未知日期放最后
     }
 
     tracing::info!(
@@ -331,12 +369,7 @@ pub async fn serve_thumb(
     let metadata = fs::metadata(&path)
         .await
         .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
-    let mtime = metadata
-        .modified()
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
-        .as_secs();
+    let mtime = metadata_mtime_key(&metadata);
     let size = metadata.len();
 
     {
@@ -390,12 +423,7 @@ pub async fn serve_preview(
     let metadata = fs::metadata(&path)
         .await
         .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
-    let mtime = metadata
-        .modified()
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
-        .duration_since(UNIX_EPOCH)
-        .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
-        .as_secs();
+    let mtime = metadata_mtime_key(&metadata);
     let size = metadata.len();
 
     {

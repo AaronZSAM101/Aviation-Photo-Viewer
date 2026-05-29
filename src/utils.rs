@@ -82,6 +82,15 @@ pub fn is_supported_image(path: &Path) -> bool {
     SUPPORTED_EXTS.contains(&ext.as_str())
 }
 
+pub fn metadata_mtime_key(metadata: &std::fs::Metadata) -> u64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_micros().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
 pub fn collect_photo_entries(
     photos_dir: PathBuf,
     max_photos: Option<usize>,
@@ -115,12 +124,7 @@ pub fn collect_photo_entries(
             continue;
         };
         let size = metadata.len();
-        let mtime = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+        let mtime = metadata_mtime_key(&metadata);
         let Some(filename) = path
             .file_name()
             .and_then(|s| s.to_str())
