@@ -199,7 +199,13 @@ pub async fn list_photos(
         let cache = state.meta_cache.read().await;
         for (i, e) in entries.iter().enumerate() {
             match cache.get(&e.subpath) {
-                Some(c) if c.mtime == e.mtime && c.size == e.size => {
+                Some(c)
+                    if c.mtime == e.mtime
+                        && c.size == e.size
+                        && (has_display_exif(&c.exif)
+                            || c.exif.image_width.is_some()
+                            || c.exif.image_height.is_some()) =>
+                {
                     cached.insert(i, (c.exif.clone(), c.sort_key));
                     hits += 1;
                 }

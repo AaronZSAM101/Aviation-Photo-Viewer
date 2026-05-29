@@ -1,7 +1,10 @@
 use axum::{extract::Path, http::StatusCode, Json};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{collections::{HashMap, HashSet}, path::Path as FsPath};
+use std::{
+    collections::{HashMap, HashSet},
+    path::Path as FsPath,
+};
 use tokio::fs;
 use uuid::Uuid;
 
@@ -272,8 +275,7 @@ pub async fn apply_stage(
     // 验证期间新加入的操作不会被误取走，依然保留在队列中。
     let ops: Vec<StagedOp> = {
         // 用 String（owned）而非 &str，避免跨 .await 的生命周期问题
-        let snapshot_ids: HashSet<String> =
-            ops_snapshot.iter().map(|op| op.id.clone()).collect();
+        let snapshot_ids: HashSet<String> = ops_snapshot.iter().map(|op| op.id.clone()).collect();
         let mut guard = state.staged_ops.write().await;
         let mut to_execute = Vec::with_capacity(ops_snapshot.len());
         let mut remaining = Vec::new();

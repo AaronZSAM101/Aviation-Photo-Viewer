@@ -64,7 +64,10 @@ async fn wait_for_shutdown_signal() {
                 }
             }
             Err(e) => {
-                tracing::warn!("Failed to register SIGTERM handler: {}; falling back to ctrl-c only", e);
+                tracing::warn!(
+                    "Failed to register SIGTERM handler: {}; falling back to ctrl-c only",
+                    e
+                );
                 tokio::signal::ctrl_c().await.ok();
             }
         }
@@ -253,15 +256,14 @@ async fn main() {
 
                 // 1. 重新扫描 FS，获取当前实际存在的文件集合
                 let current_photos_dir = photos_dir_for_flush.read().await.clone();
-                let live: std::collections::HashSet<String> = tokio::task::spawn_blocking(
-                    move || {
+                let live: std::collections::HashSet<String> =
+                    tokio::task::spawn_blocking(move || {
                         let (entries, _) =
                             photo_viewer::utils::collect_photo_entries(current_photos_dir, None);
                         entries.into_iter().map(|e| e.subpath).collect()
-                    },
-                )
-                .await
-                .unwrap_or_default();
+                    })
+                    .await
+                    .unwrap_or_default();
 
                 // 2. 清除已不存在文件的缓存条目（安全：此时持写锁时间极短，
                 //    且 live 是刚刚完成的新鲜扫描，不存在 rename 竞态）
