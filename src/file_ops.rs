@@ -71,6 +71,18 @@ struct TrashManifestEntry {
 
 type TrashManifest = HashMap<String, TrashManifestEntry>;
 
+fn is_generated_trash_name(name: &str) -> bool {
+    name.len() == 32 && name.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn legacy_original_from_trash_name(name: &str) -> Option<String> {
+    if name.len() > 37 && name.chars().nth(name.len() - 37) == Some('-') {
+        Some(name[..name.len() - 37].replace('_', "/"))
+    } else {
+        None
+    }
+}
+
 async fn read_trash_manifest(trash_dir: &FsPath) -> TrashManifest {
     match fs::read_to_string(trash_dir.join(TRASH_MANIFEST)).await {
         Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
@@ -85,6 +97,47 @@ async fn write_trash_manifest(trash_dir: &FsPath, manifest: &TrashManifest) -> s
     let tmp_path = trash_dir.join(format!(".{}.tmp", TRASH_MANIFEST));
     fs::write(&tmp_path, data).await?;
     fs::rename(&tmp_path, &manifest_path).await
+}
+
+async fn migrate_legacy_trash_names(
+    trash_dir: &FsPath,
+    manifest: &mut TrashManifest,
+) -> std::io::Result<bool> {
+    let mut dirty = false;
+    let mut dir = match fs::read_dir(trash_dir).await {
+        Ok(dir) => dir,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+
+    while let Some(entry) = dir.next_entry().await? {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_str() else {
+            continue;
+        };
+        if name == TRASH_MANIFEST || name.starts_with('.') || is_generated_trash_name(name) {
+            continue;
+        }
+
+        let original = manifest
+            .remove(name)
+            .map(|entry| entry.original)
+            .or_else(|| legacy_original_from_trash_name(name))
+            .unwrap_or_else(|| name.to_string());
+
+        let new_name = loop {
+            let candidate = Uuid::new_v4().simple().to_string();
+            if !trash_dir.join(&candidate).exists() {
+                break candidate;
+            }
+        };
+
+        fs::rename(entry.path(), trash_dir.join(&new_name)).await?;
+        manifest.insert(new_name, TrashManifestEntry { original });
+        dirty = true;
+    }
+
+    Ok(dirty)
 }
 
 /// 暂存一个文件操作
@@ -294,7 +347,18 @@ pub async fn apply_stage(
     // 步骤5：执行文件操作（不持任何锁）
     let mut applied = 0usize;
     let mut trash_manifest = read_trash_manifest(&trash_dir).await;
+    let legacy_migrated = migrate_legacy_trash_names(&trash_dir, &mut trash_manifest)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to migrate trash names: {}", e),
+            )
+        })?;
     let mut trash_manifest_dirty = false;
+    if legacy_migrated {
+        trash_manifest_dirty = true;
+    }
 
     for op in ops {
         let src = photos_dir.join(&op.src);
@@ -418,13 +482,19 @@ pub async fn list_trash(
         pd.join(".trash")
     };
     let mut items = Vec::new();
-    let manifest = read_trash_manifest(&trash_dir).await;
+    let mut manifest = read_trash_manifest(&trash_dir).await;
+    if migrate_legacy_trash_names(&trash_dir, &mut manifest)
+        .await
+        .unwrap_or(false)
+    {
+        let _ = write_trash_manifest(&trash_dir, &manifest).await;
+    }
     // 使用异步 read_dir，避免阻塞 tokio 工作线程
     if let Ok(mut dir) = tokio::fs::read_dir(&trash_dir).await {
         while let Ok(Some(entry)) = dir.next_entry().await {
             let file_name = entry.file_name();
             if let Some(name) = file_name.to_str() {
-                if name == TRASH_MANIFEST {
+                if name == TRASH_MANIFEST || name.starts_with('.') {
                     continue;
                 }
                 let original = manifest.get(name).map(|e| e.original.clone());

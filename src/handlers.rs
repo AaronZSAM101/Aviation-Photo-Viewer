@@ -4,6 +4,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     Json,
 };
+use sha2::{Digest, Sha256};
 use std::{collections::HashMap, path::PathBuf};
 use tokio::fs;
 
@@ -48,6 +49,21 @@ fn date_asc_sort_key(photo: &PhotoMeta) -> i64 {
     } else {
         photo.date_sort_key
     }
+}
+
+fn versioned_thumb_cache_path(
+    photos_dir: &std::path::Path,
+    subpath: &str,
+    mtime: u64,
+    size: u64,
+) -> PathBuf {
+    let mut hasher = Sha256::new();
+    hasher.update(subpath.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(mtime.to_le_bytes());
+    hasher.update(size.to_le_bytes());
+    let key = hex::encode(hasher.finalize());
+    cache_paths::thumbs_dir(photos_dir).join(key)
 }
 
 fn clean_lens_value(value: &serde_json::Value) -> Option<String> {
@@ -130,6 +146,7 @@ pub async fn refresh_caches(
     let photos_dir = state.photos_dir.read().await.clone();
     let cache_file = cache_paths::meta_cache(&photos_dir);
     let legacy_cache_file = cache_paths::legacy_meta_cache(&photos_dir);
+    let thumbs_dir = cache_paths::thumbs_dir(&photos_dir);
 
     {
         state.thumb_cache.write().await.clear();
@@ -148,6 +165,11 @@ pub async fn refresh_caches(
             "Failed to remove legacy meta cache file during refresh: {}",
             e
         ),
+    }
+    match fs::remove_dir_all(&thumbs_dir).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => tracing::warn!("Failed to remove thumbnail cache dir during refresh: {}", e),
     }
 
     let bg_state = state.clone();
@@ -494,14 +516,39 @@ pub async fn serve_thumb(
         .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
     let mtime = metadata_mtime_key(&metadata);
     let size = metadata.len();
+    let disk_cache_path = {
+        let pd = state.photos_dir.read().await.clone();
+        versioned_thumb_cache_path(&pd, &subpath, mtime, size)
+    };
 
     {
         let cache = state.thumb_cache.read().await;
         if let Some((cached_mtime, cached_size, data)) = cache.get(&cache_key) {
             if *cached_mtime == mtime && *cached_size == size {
-                return Ok(([(header::CONTENT_TYPE, "image/jpeg")], data.clone()));
+                return Ok((
+                    [
+                        (header::CONTENT_TYPE, "image/jpeg"),
+                        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+                    ],
+                    data.clone(),
+                ));
             }
         }
+    }
+
+    if let Ok(data) = fs::read(&disk_cache_path).await {
+        {
+            let mut cache = state.thumb_cache.write().await;
+            cache.insert(cache_key, (mtime, size, data.clone()));
+            evict_cache(&mut cache, MAX_THUMB_CACHE);
+        }
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+            ],
+            data,
+        ));
     }
 
     let thumb_data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ()> {
@@ -526,7 +573,21 @@ pub async fn serve_thumb(
         evict_cache(&mut cache, MAX_THUMB_CACHE);
     }
 
-    Ok(([(header::CONTENT_TYPE, "image/jpeg")], thumb_data))
+    if let Some(parent) = disk_cache_path.parent() {
+        if fs::create_dir_all(parent).await.is_ok() {
+            if let Err(e) = fs::write(&disk_cache_path, &thumb_data).await {
+                tracing::warn!("Failed to write thumbnail cache: {}", e);
+            }
+        }
+    }
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, "image/jpeg"),
+            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
+        ],
+        thumb_data,
+    ))
 }
 
 /// 提供预览图片（最大2400px，大于该尺寸则转码为JPEG）

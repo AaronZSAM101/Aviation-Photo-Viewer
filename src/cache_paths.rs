@@ -18,6 +18,10 @@ pub fn hash_cache(photos_dir: &Path) -> PathBuf {
     state_dir(photos_dir).join("hash_cache.json")
 }
 
+pub fn thumbs_dir(photos_dir: &Path) -> PathBuf {
+    state_dir(photos_dir).join("thumbs")
+}
+
 pub fn legacy_hash_cache(photos_dir: &Path) -> PathBuf {
     photos_dir.join(".photo_viewer_hash_cache.json")
 }

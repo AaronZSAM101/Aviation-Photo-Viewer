@@ -3,6 +3,7 @@ use std::{
     time::UNIX_EPOCH,
 };
 
+use crate::cache_paths;
 use crate::models::PhotoEntry;
 
 pub const SUPPORTED_EXTS: &[&str] = &["jpg", "jpeg", "png", "tiff", "tif", "webp"];
@@ -91,6 +92,21 @@ pub fn metadata_mtime_key(metadata: &std::fs::Metadata) -> u64 {
         .unwrap_or(0)
 }
 
+fn should_descend(entry: &walkdir::DirEntry, root: &Path) -> bool {
+    if entry.depth() == 0 {
+        return true;
+    }
+
+    let Ok(rel) = entry.path().strip_prefix(root) else {
+        return true;
+    };
+
+    !rel.components().any(|c| {
+        let name = c.as_os_str().to_string_lossy();
+        name == cache_paths::STATE_DIR_NAME || name == ".trash" || name.starts_with('@')
+    })
+}
+
 pub fn collect_photo_entries(
     photos_dir: PathBuf,
     max_photos: Option<usize>,
@@ -104,17 +120,9 @@ pub fn collect_photo_entries(
     for entry in WalkDir::new(&photos_dir)
         .max_depth(4)
         .into_iter()
+        .filter_entry(|entry| should_descend(entry, &photos_root))
         .filter_map(|e| e.ok())
     {
-        if let Ok(rel) = entry.path().strip_prefix(&photos_root) {
-            if rel
-                .components()
-                .any(|c| c.as_os_str().to_string_lossy().starts_with('@'))
-            {
-                continue;
-            }
-        }
-
         if !entry.file_type().is_file() || !is_supported_image(entry.path()) {
             continue;
         }

@@ -90,6 +90,7 @@ deploy/
 
 # Photo Viewer runtime state/cache files
 .photo_viewer/
+.trash/
 .photo_viewer_meta.json
 .photo_viewer_hash_cache.json
 .photo_viewer_exif_overrides.json
