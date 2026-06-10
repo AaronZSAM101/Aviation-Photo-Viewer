@@ -19,6 +19,8 @@ export const dom = {
   viewer:        $('viewer'),
   vName:         $('v-name'),
   vCounter:      $('v-counter'),
+  vZoomSel:      $('v-zoom-sel'),
+  vContent:      $('v-content'),
   vImg:          $('v-img'),
   vCanvas:       $('v-canvas'),
   vGrid:         $('v-grid'),
@@ -93,6 +95,10 @@ export const state = {
   rgbOn:       false,
   histOn:      false,
   infoOn:      true,
+  zoomMode:    'fit',
+  zoomScale:   1,
+  isPanning:   false,
+  panStart:    null,
 
   // 文件操作 modal
   pendingFileOp: { kind: null, src: null, srcFolder: '', srcName: '' },

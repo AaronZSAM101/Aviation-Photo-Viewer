@@ -16,6 +16,8 @@ import {
   fitGridToImage, refreshHistograms, syncToggleButtons,
   refreshCurrentViewer,
   viewerToggleDelete, currentViewerSubpath, openViewer,
+  applyViewerZoom, setViewerZoomMode, zoomViewerBy,
+  startViewerPan, moveViewerPan, endViewerPan,
 } from './viewer.js';
 import { openFileOpDialog, commitFileOp, openBulkMoveDialog, commitBulkMove } from './file-ops.js';
 import { openExifEditDialog, commitExifEdit } from './exif-edit.js';
@@ -68,6 +70,10 @@ export function bindAllEvents() {
     syncToggleButtons();
     if (state.histOn) refreshHistograms();
   });
+  dom.vZoomSel.addEventListener('change', e => {
+    setViewerZoomMode(e.target.value);
+    saveBrowsePreferences();
+  });
   dom.vInfoBtn.addEventListener('click', () => {
     state.infoOn = !state.infoOn;
     syncToggleButtons();
@@ -94,12 +100,28 @@ export function bindAllEvents() {
     const sp = currentViewerSubpath();
     if (sp) openFileOpDialog('copy', sp);
   });
+  dom.vStage.addEventListener('wheel', e => {
+    if (!dom.viewer.classList.contains('show')) return;
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    zoomViewerBy(Math.exp(-e.deltaY * 0.002), e.clientX, e.clientY);
+  }, { passive: false });
+  dom.vStage.addEventListener('scroll', fitGridToImage);
+  dom.vStage.addEventListener('pointerdown', startViewerPan);
+  dom.vStage.addEventListener('pointermove', moveViewerPan);
+  dom.vStage.addEventListener('pointerup', endViewerPan);
+  dom.vStage.addEventListener('pointercancel', endViewerPan);
+  dom.vStage.addEventListener('pointerleave', endViewerPan);
 
   // ── 窗口事件 ──────────────────────────────────────────────────────────
   window.addEventListener('resize', () => {
     if (!dom.viewer.classList.contains('show')) return;
     syncToggleButtons();
-    fitGridToImage();
+    if (state.zoomMode === 'fit' || state.zoomMode === 'fill') {
+      applyViewerZoom({ mode: state.zoomMode, preserveCenter: true });
+    } else {
+      fitGridToImage();
+    }
   });
   window.addEventListener('keydown', e => {
     // Viewer 内的键盘快捷键

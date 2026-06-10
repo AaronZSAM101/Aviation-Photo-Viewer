@@ -43,6 +43,10 @@ export function previewUrl(p) {
   return `/preview/${encodePath(subpath(p))}?v=${photoVersion(p)}`;
 }
 
+export function photoUrl(p) {
+  return `/photos/${encodePath(subpath(p))}?v=${photoVersion(p)}`;
+}
+
 export function splitSubpath(sp) {
   const i = sp.lastIndexOf('/');
   return i >= 0

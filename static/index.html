@@ -103,6 +103,12 @@
       <button id="v-finegridbtn" data-short="F" title="地平 (F)">地平</button>
       <button id="v-rgbbtn" data-short="R" title="RGB (R)">RGB</button>
       <button id="v-histbtn" data-short="H" title="直方图 (H)">直方图</button>
+      <select id="v-zoom-sel" title="查看比例">
+        <option value="fit">适合屏幕</option>
+        <option value="actual">100%</option>
+        <option value="fill">填满窗口</option>
+        <option value="custom" disabled hidden>自定义</option>
+      </select>
       <button id="v-info-btn" data-short="I" class="active" title="EXIF (I)">EXIF</button>
       <button id="v-exif-edit-btn" data-short="编" title="编辑 EXIF">编辑</button>
       <span class="vsep"></span>
@@ -115,21 +121,23 @@
 
   <div id="vmain">
     <div id="vstage">
-      <img id="v-img" alt="">
-      <canvas id="v-canvas"></canvas>
-      <svg id="v-grid" preserveAspectRatio="none" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-        <g fill="none" stroke="currentColor" stroke-width="1.5">
-          <!-- 4 edge-to-edge guide lines (positions as %, aspect-independent) -->
-          <line x1="23.14" y1="0" x2="23.14" y2="100"/>
-          <line x1="76.86" y1="0" x2="76.86" y2="100"/>
-          <line x1="0" y1="28.04" x2="100" y2="28.04"/>
-          <line x1="0" y1="71.96" x2="100" y2="71.96"/>
-          <!-- Center crosshair: cuts the rectangle into 4 equal quadrants -->
-          <line x1="23.14" y1="50.00" x2="76.86" y2="50.00"/>
-          <line x1="50.00" y1="28.04" x2="50.00" y2="71.96"/>
-        </g>
-      </svg>
-      <div id="v-finegrid"></div>
+      <div id="v-content">
+        <img id="v-img" alt="">
+        <canvas id="v-canvas"></canvas>
+        <svg id="v-grid" preserveAspectRatio="none" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+          <g fill="none" stroke="currentColor" stroke-width="1.5">
+            <!-- 4 edge-to-edge guide lines (positions as %, aspect-independent) -->
+            <line x1="23.14" y1="0" x2="23.14" y2="100"/>
+            <line x1="76.86" y1="0" x2="76.86" y2="100"/>
+            <line x1="0" y1="28.04" x2="100" y2="28.04"/>
+            <line x1="0" y1="71.96" x2="100" y2="71.96"/>
+            <!-- Center crosshair: cuts the rectangle into 4 equal quadrants -->
+            <line x1="23.14" y1="50.00" x2="76.86" y2="50.00"/>
+            <line x1="50.00" y1="28.04" x2="50.00" y2="71.96"/>
+          </g>
+        </svg>
+        <div id="v-finegrid"></div>
+      </div>
       <div id="v-charts">
         <div class="chart-panel" id="v-rgb-panel">
           <div class="chart-title">RGB</div>

@@ -10,6 +10,8 @@
 #vtoolbar button{background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:5px 10px;font-size:11px;border-radius:4px;cursor:pointer;font-family:var(--sans)}
 #vtoolbar button:hover{border-color:var(--accent);background:var(--surface-hover)}
 #vtoolbar button.active{background:var(--accent-soft);color:var(--accent);border-color:var(--accent)}
+#vtoolbar select{background:var(--surface2);border:1px solid var(--border2);color:var(--text);padding:5px 8px;font-size:11px;border-radius:4px;font-family:var(--sans);min-height:28px}
+#v-zoom-sel{min-width:92px}
 #vtoolbar .icon{padding:5px 9px;font-size:14px;line-height:1}
 #vtoolbar .vsep{width:1px;height:18px;background:var(--border2);flex-shrink:0;margin:0 2px}
 #v-staged-pill{display:none;font-family:var(--mono);font-size:10px;color:var(--on-danger);background:var(--danger-strong);padding:2px 7px;border-radius:3px;letter-spacing:.05em;flex-shrink:0;margin-right:4px}
@@ -19,15 +21,17 @@
 #v-delete-btn.staged:hover{background:var(--danger-hover);border-color:var(--danger-hover);color:var(--on-danger)}
 
 #vmain{flex:1;display:flex;min-height:0;position:relative}
-#vstage{flex:1;display:flex;align-items:center;justify-content:center;background:#000;position:relative;overflow:hidden;min-width:0}
-#v-img,#v-canvas{max-width:100%;max-height:100%;object-fit:contain;display:block}
+#vstage{flex:1;display:flex;background:#000;position:relative;overflow:auto;min-width:0;cursor:grab;touch-action:none}
+#vstage.is-panning{cursor:grabbing;user-select:none}
+#v-content{position:relative;flex:0 0 auto;margin:auto;min-width:1px;min-height:1px}
+#v-img,#v-canvas{position:absolute;inset:0;width:100%;height:100%;max-width:none;max-height:none;object-fit:fill;display:block}
 #v-canvas{display:none}
-#v-grid{position:absolute;pointer-events:none;display:none;color:var(--grid);width:100%;height:100%}
+#v-grid{position:absolute;inset:0;pointer-events:none;display:none;color:var(--grid);width:100%;height:100%}
 #v-grid.show{display:block}
 #v-grid line{vector-effect:non-scaling-stroke}
 
 /* Fine grid: scaled from 25×25px at a 1024×683 display size */
-#v-finegrid{position:absolute;pointer-events:none;display:none;
+#v-finegrid{position:absolute;inset:0;pointer-events:none;display:none;
   --c:rgba(246,224,0,.7);
   --fine-grid-x:25px;
   --fine-grid-y:25px;

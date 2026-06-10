@@ -1,7 +1,7 @@
 // 全屏查看器：图像显示、导航、信息面板、直方图、网格 overlay、污点检查
 import { dom, state, $ } from './state.js';
 import {
-  subpath, previewUrl, fmt_size, fmt_megapixels, hasAnyExif,
+  subpath, photoUrl, fmt_size, fmt_megapixels, hasAnyExif,
 } from './utils.js';
 import { stageSingleDelete } from './api.js';
 import { updateCardStagedIndicators } from './render.js';
@@ -11,6 +11,8 @@ const gpsCoordModes = {
   lat: 'dms',
   lon: 'dms',
 };
+const MIN_ZOOM = 0.05;
+const MAX_ZOOM = 8;
 
 function gpsRef(value, positiveLabel, negativeLabel) {
   if (typeof value === 'string' && value.trim()) {
@@ -120,6 +122,8 @@ export function openViewer(idx) {
   state.rgbOn      = false;
   state.histOn     = false;
   state.infoOn     = true;
+  state.zoomMode   = state.zoomMode || 'fit';
+  state.zoomScale  = 1;
   syncToggleButtons();
   dom.viewer.classList.add('show');
   showCurrent();
@@ -163,6 +167,7 @@ function showCurrent() {
 
   dom.vImg.onload = () => {
     dom.vSpin.classList.remove('show');
+    applyViewerZoom({ mode: state.zoomMode, preserveCenter: false });
     fitGridToImage();
     adjustVinfoHeight();
     adjustVchartsPosition();
@@ -170,7 +175,7 @@ function showCurrent() {
     prefetchAdjacent();
   };
   dom.vImg.onerror = () => { dom.vSpin.classList.remove('show'); };
-  dom.vImg.src = previewUrl(p);
+  dom.vImg.src = photoUrl(p);
 
   renderInfoPanel(p);
   updateViewerStagedIndicator();
@@ -199,7 +204,7 @@ function prefetchAdjacent() {
   [state.viewerIndex - 1, state.viewerIndex + 1].forEach(i => {
     const p = state.filteredPhotos[i];
     if (!p) return;
-    const url = previewUrl(p);
+    const url = photoUrl(p);
     if (state.prefetchedPreviewUrls.has(url)) return;
     state.prefetchedPreviewUrls.add(url);
     if (state.prefetchedPreviewUrls.size > 80) {
@@ -353,26 +358,131 @@ export function applyEqualize() {
   ctx.putImageData(imgData, 0, 0);
   dom.vImg.style.display    = 'none';
   dom.vCanvas.style.display = 'block';
+  applyViewerZoom({ mode: state.zoomMode, preserveCenter: true });
 }
 
 export function disableEqualize() {
   dom.vCanvas.style.display = 'none';
   dom.vImg.style.display    = '';
+  applyViewerZoom({ mode: state.zoomMode, preserveCenter: true });
+}
+
+function clampZoom(scale) {
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scale));
+}
+
+function getDisplayDimensions() {
+  const src = getDisplaySource();
+  if (!src) return null;
+  const width = src.naturalWidth || src.width;
+  const height = src.naturalHeight || src.height;
+  if (!width || !height) return null;
+  return { width, height };
+}
+
+function scaleForMode(mode) {
+  const dims = getDisplayDimensions();
+  if (!dims || !dom.vStage) return 1;
+  const stageW = Math.max(1, dom.vStage.clientWidth);
+  const stageH = Math.max(1, dom.vStage.clientHeight);
+  if (mode === 'fit') return clampZoom(Math.min(stageW / dims.width, stageH / dims.height));
+  if (mode === 'fill') return clampZoom(Math.max(stageW / dims.width, stageH / dims.height));
+  if (mode === 'custom') return clampZoom(state.zoomScale || 1);
+  return 1;
+}
+
+function viewportAnchorPoint(anchor) {
+  const stage = dom.vStage;
+  if (!stage) return { x: 0, y: 0 };
+  if (anchor) return anchor;
+  return { x: stage.clientWidth / 2, y: stage.clientHeight / 2 };
+}
+
+export function applyViewerZoom({ mode = state.zoomMode, scale = null, anchor = null, preserveCenter = true } = {}) {
+  const dims = getDisplayDimensions();
+  const stage = dom.vStage;
+  const content = dom.vContent;
+  if (!dims || !stage || !content) return;
+
+  const anchorPt = viewportAnchorPoint(anchor);
+  const oldScale = state.zoomScale || 1;
+  const contentX = preserveCenter ? (stage.scrollLeft + anchorPt.x) / oldScale : dims.width / 2;
+  const contentY = preserveCenter ? (stage.scrollTop + anchorPt.y) / oldScale : dims.height / 2;
+
+  state.zoomMode = mode;
+  state.zoomScale = clampZoom(scale == null ? scaleForMode(mode) : scale);
+  if (dom.vZoomSel) dom.vZoomSel.value = state.zoomMode;
+
+  content.style.width = Math.max(1, Math.round(dims.width * state.zoomScale)) + 'px';
+  content.style.height = Math.max(1, Math.round(dims.height * state.zoomScale)) + 'px';
+
+  requestAnimationFrame(() => {
+    stage.scrollLeft = Math.max(0, contentX * state.zoomScale - anchorPt.x);
+    stage.scrollTop = Math.max(0, contentY * state.zoomScale - anchorPt.y);
+    fitGridToImage();
+    adjustVinfoHeight();
+    adjustVchartsPosition();
+  });
+}
+
+export function setViewerZoomMode(mode) {
+  if (mode === 'custom') return;
+  applyViewerZoom({ mode, preserveCenter: true });
+}
+
+export function zoomViewerBy(delta, clientX, clientY) {
+  const stage = dom.vStage;
+  if (!stage) return;
+  const rect = stage.getBoundingClientRect();
+  const anchor = {
+    x: clientX - rect.left,
+    y: clientY - rect.top,
+  };
+  const nextScale = clampZoom((state.zoomScale || 1) * delta);
+  applyViewerZoom({ mode: 'custom', scale: nextScale, anchor, preserveCenter: true });
+}
+
+export function startViewerPan(e) {
+  if (e.button !== 0 || !dom.viewer.classList.contains('show')) return;
+  if (e.target.closest('button,select,input,textarea')) return;
+  state.isPanning = true;
+  state.panStart = {
+    x: e.clientX,
+    y: e.clientY,
+    scrollLeft: dom.vStage.scrollLeft,
+    scrollTop: dom.vStage.scrollTop,
+  };
+  dom.vStage.classList.add('is-panning');
+  dom.vStage.setPointerCapture?.(e.pointerId);
+}
+
+export function moveViewerPan(e) {
+  if (!state.isPanning || !state.panStart) return;
+  dom.vStage.scrollLeft = state.panStart.scrollLeft - (e.clientX - state.panStart.x);
+  dom.vStage.scrollTop = state.panStart.scrollTop - (e.clientY - state.panStart.y);
+  fitGridToImage();
+}
+
+export function endViewerPan(e) {
+  if (!state.isPanning) return;
+  state.isPanning = false;
+  state.panStart = null;
+  dom.vStage.classList.remove('is-panning');
+  dom.vStage.releasePointerCapture?.(e.pointerId);
 }
 
 // ── 网格 overlay 贴合显示中的图像矩形 ─────────────────────────────────────
 export function fitGridToImage() {
-  const img = (dom.vCanvas.style.display === 'block') ? dom.vCanvas : dom.vImg;
-  if (!img || !img.getBoundingClientRect) return;
-  const stage  = dom.vStage.getBoundingClientRect();
-  const r      = img.getBoundingClientRect();
-  const fineGridX = Math.max(4, r.width  * 25 / 1024);
+  const content = dom.vContent;
+  if (!content || !content.getBoundingClientRect) return;
+  const r = content.getBoundingClientRect();
+  const fineGridX = Math.max(4, r.width * 25 / 1024);
   const fineGridY = Math.max(4, r.height * 25 / 683);
   const styles = {
-    left:   (r.left - stage.left) + 'px',
-    top:    (r.top  - stage.top ) + 'px',
-    width:  r.width  + 'px',
-    height: r.height + 'px',
+    left:   '0',
+    top:    '0',
+    width:  '100%',
+    height: '100%',
   };
   Object.assign(dom.vGrid.style,     styles);
   Object.assign(dom.vFineGrid.style, styles);
