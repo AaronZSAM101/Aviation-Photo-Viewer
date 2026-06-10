@@ -82,6 +82,7 @@ export const state = {
   stagedDeletes:    new Set(),
   stagedRenameSrcs: new Set(),
   stagedRenameMap:  new Map(),
+  stagedExifSrcs:   new Set(),
   stagedOpTargets:  new Set(),
 
   // 查看器

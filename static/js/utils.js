@@ -58,6 +58,8 @@ export function joinSubpath(folder, name) {
 export function hasAnyExif(e) {
   return !!(e.date_taken || e.make || e.model || e.lens_model || e.software ||
     e.iso || e.exposure_time || e.f_number || e.focal_length || e.focal_length_35mm ||
-    e.gps_lat || e.gps_lon || e.flash ||
+    e.gps_altitude || e.gps_altitude_ref || e.gps_lat || e.gps_lat_ref ||
+    e.gps_lon || e.gps_lon_ref || e.gps_date_stamp || e.gps_time_stamp ||
+    e.gps_version_id || e.gps_map_datum || e.flash ||
     e.white_balance || e.metering_mode || e.exposure_bias);
 }

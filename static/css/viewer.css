@@ -87,6 +87,7 @@
 .sec-title{font-size:9px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);padding-bottom:5px;border-bottom:1px solid var(--border);margin-bottom:6px}
 .row{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:2px 0}
 .rk{font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;flex-shrink:0}
+.rk.gps-toggle-key{cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px}
+.rk.gps-toggle-key:hover{color:var(--accent)}
 .rv{font-family:var(--mono);font-size:10px;color:var(--info);text-align:right;word-break:break-all}
 .no-exif-note{text-align:center;color:var(--hint);font-size:11px;padding:16px 0}
-

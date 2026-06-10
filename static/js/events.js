@@ -188,11 +188,12 @@ export function bindAllEvents() {
     if (!sp) return;
     try {
       await commitExifEdit();
-      await loadPhotos();
-      refreshCurrentViewer(sp);
+      await fetchStagedOps();
+      updateCardStagedIndicators();
+      alert('已加入分批（EXIF）');
       closeModal('modal-exif');
     } catch (e) {
-      alert('保存 EXIF 失败: ' + e.message);
+      alert('加入 EXIF 分批失败: ' + e.message);
     }
   });
   // 批量移动 modal 内的「确定」

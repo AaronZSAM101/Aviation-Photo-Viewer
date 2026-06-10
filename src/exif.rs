@@ -42,8 +42,16 @@ fn has_display_exif(d: &ExifData) -> bool {
         || d.f_number.is_some()
         || d.focal_length.is_some()
         || d.focal_length_35mm.is_some()
+        || d.gps_altitude.is_some()
+        || d.gps_altitude_ref.is_some()
         || d.gps_lat.is_some()
+        || d.gps_lat_ref.is_some()
         || d.gps_lon.is_some()
+        || d.gps_lon_ref.is_some()
+        || d.gps_date_stamp.is_some()
+        || d.gps_time_stamp.is_some()
+        || d.gps_version_id.is_some()
+        || d.gps_map_datum.is_some()
         || d.flash.is_some()
         || d.white_balance.is_some()
         || d.metering_mode.is_some()
@@ -138,7 +146,15 @@ fn extract_exif_with_exiftool(path: &Path) -> Option<ExifData> {
             "-ImageWidth",
             "-ImageHeight",
             "-GPSLatitude",
+            "-GPSLatitudeRef",
             "-GPSLongitude",
+            "-GPSLongitudeRef",
+            "-GPSAltitude",
+            "-GPSAltitudeRef",
+            "-GPSDateStamp",
+            "-GPSTimeStamp",
+            "-GPSVersionID",
+            "-GPSMapDatum",
             "-Flash",
             "-WhiteBalance",
             "-MeteringMode",
@@ -169,8 +185,16 @@ fn extract_exif_with_exiftool(path: &Path) -> Option<ExifData> {
     d.focal_length_35mm = first_string(obj, &["FocalLengthIn35mmFormat"]);
     d.image_width = first_u32(obj, &["ExifImageWidth", "ImageWidth"]);
     d.image_height = first_u32(obj, &["ExifImageHeight", "ImageHeight"]);
+    d.gps_altitude = first_f64(obj, &["GPSAltitude"]);
+    d.gps_altitude_ref = first_string(obj, &["GPSAltitudeRef"]);
     d.gps_lat = first_f64(obj, &["GPSLatitude"]);
+    d.gps_lat_ref = first_string(obj, &["GPSLatitudeRef"]);
     d.gps_lon = first_f64(obj, &["GPSLongitude"]);
+    d.gps_lon_ref = first_string(obj, &["GPSLongitudeRef"]);
+    d.gps_date_stamp = first_string(obj, &["GPSDateStamp"]);
+    d.gps_time_stamp = first_string(obj, &["GPSTimeStamp"]);
+    d.gps_version_id = first_string(obj, &["GPSVersionID"]);
+    d.gps_map_datum = first_string(obj, &["GPSMapDatum"]);
     d.flash = first_string(obj, &["Flash"]);
     d.white_balance = first_string(obj, &["WhiteBalance"]);
     d.metering_mode = first_string(obj, &["MeteringMode"]);
@@ -193,7 +217,11 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
         Ok(e) => e,
         Err(e) => match e.distill_partial_result(|_warnings| {}) {
             Ok(partial) => partial,
-            Err(_) => return (ExifData::default(), 0),
+            Err(_) => {
+                let fallback = extract_exif_with_exiftool(path).unwrap_or_default();
+                let sort_key = date_to_sort_key(fallback.date_taken.as_deref());
+                return (fallback, sort_key);
+            }
         },
     };
 
@@ -264,10 +292,34 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
     d.image_height = get_any(exif::Tag::PixelYDimension).and_then(read_u32);
 
     // GPS
+    d.gps_lat_ref = get_str(exif::Tag::GPSLatitudeRef);
     d.gps_lat = get_any(exif::Tag::GPSLatitude)
         .and_then(|f| gps_coord(f, get_any(exif::Tag::GPSLatitudeRef)));
+    d.gps_lon_ref = get_str(exif::Tag::GPSLongitudeRef);
     d.gps_lon = get_any(exif::Tag::GPSLongitude)
         .and_then(|f| gps_coord(f, get_any(exif::Tag::GPSLongitudeRef)));
+    d.gps_altitude_ref = get_str(exif::Tag::GPSAltitudeRef);
+    d.gps_altitude = get_any(exif::Tag::GPSAltitude).and_then(|f| {
+        if let exif::Value::Rational(ref v) = f.value {
+            v.first().map(rational_to_f64).map(|alt| {
+                let below_sea_level = get_any(exif::Tag::GPSAltitudeRef)
+                    .map(|rf| rf.display_value().to_string())
+                    .map(|s| s.contains("below") || s.trim() == "1")
+                    .unwrap_or(false);
+                if below_sea_level {
+                    -alt
+                } else {
+                    alt
+                }
+            })
+        } else {
+            None
+        }
+    });
+    d.gps_date_stamp = get_str(exif::Tag::GPSDateStamp);
+    d.gps_time_stamp = get_str(exif::Tag::GPSTimeStamp);
+    d.gps_version_id = get_str(exif::Tag::GPSVersionID);
+    d.gps_map_datum = get_str(exif::Tag::GPSMapDatum);
 
     // 闪光灯
     d.flash = get_str(exif::Tag::Flash);

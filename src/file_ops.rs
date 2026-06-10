@@ -4,12 +4,16 @@ use serde_json::json;
 use std::{
     collections::{HashMap, HashSet},
     path::Path as FsPath,
+    process::Command,
 };
 use tokio::fs;
 use uuid::Uuid;
 
-use crate::models::{AppState, OpKind, StagedOp};
 use crate::utils::safe_subpath;
+use crate::{
+    cache_paths, exif_edit,
+    models::{AppState, ExifData, OpKind, StagedOp},
+};
 
 // ─── 缓存迁移辅助 ────────────────────────────────────────────────────────────
 
@@ -62,7 +66,140 @@ async fn remove_cache_entries(state: &AppState, key: &str) {
     evict!(exif_overrides);
 }
 
+async fn remove_persisted_exif_override(
+    state: &AppState,
+    photos_dir: &FsPath,
+    key: &str,
+) -> Result<(), String> {
+    let snapshot = {
+        let mut overrides = state.exif_overrides.write().await;
+        overrides.remove(key);
+        overrides.clone()
+    };
+    exif_edit::persist_exif_overrides_atomic(&cache_paths::exif_overrides(photos_dir), &snapshot)
+        .await
+}
+
 const TRASH_MANIFEST: &str = ".manifest.json";
+
+fn exiftool_set(args: &mut Vec<String>, tag: &str, value: &Option<String>) {
+    if let Some(value) = value.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        args.push(format!("-{}={}", tag, value));
+    }
+}
+
+fn exiftool_set_u32(args: &mut Vec<String>, tag: &str, value: Option<u32>) {
+    if let Some(value) = value {
+        args.push(format!("-{}={}", tag, value));
+    }
+}
+
+fn normalize_f_number(value: &str) -> String {
+    value
+        .trim()
+        .trim_start_matches('f')
+        .trim_start_matches('F')
+        .trim_start_matches('/')
+        .trim()
+        .to_string()
+}
+
+fn split_exif_datetime(value: &str) -> Option<(&str, &str)> {
+    let mut parts = value.trim().split_whitespace();
+    let date = parts.next()?;
+    let time = parts.next().unwrap_or("00:00:00");
+    if date.len() >= 10 {
+        Some((&date[..10], time))
+    } else {
+        None
+    }
+}
+
+fn exiftool_args_for_update(exif: &ExifData) -> Vec<String> {
+    let mut args = vec!["-overwrite_original".to_string(), "-P".to_string()];
+
+    exiftool_set(&mut args, "DateTimeOriginal", &exif.date_taken);
+    exiftool_set(&mut args, "CreateDate", &exif.date_taken);
+    exiftool_set(&mut args, "Make", &exif.make);
+    exiftool_set(&mut args, "Model", &exif.model);
+    exiftool_set(&mut args, "LensModel", &exif.lens_model);
+    exiftool_set(&mut args, "Software", &exif.software);
+    exiftool_set(&mut args, "ISO", &exif.iso);
+    exiftool_set(&mut args, "ExposureTime", &exif.exposure_time);
+    if let Some(f_number) = exif.f_number.as_deref() {
+        let normalized = normalize_f_number(f_number);
+        if !normalized.is_empty() {
+            args.push(format!("-FNumber={normalized}"));
+        }
+    }
+    exiftool_set(&mut args, "FocalLength", &exif.focal_length);
+    exiftool_set(
+        &mut args,
+        "FocalLengthIn35mmFormat",
+        &exif.focal_length_35mm,
+    );
+    exiftool_set_u32(&mut args, "ExifImageWidth", exif.image_width);
+    exiftool_set_u32(&mut args, "ExifImageHeight", exif.image_height);
+
+    if let Some(lat) = exif.gps_lat.filter(|v| v.is_finite()) {
+        args.push(format!("-GPSLatitude={}", lat.abs()));
+        args.push(format!(
+            "-GPSLatitudeRef={}",
+            if lat < 0.0 { "S" } else { "N" }
+        ));
+    }
+    if let Some(lon) = exif.gps_lon.filter(|v| v.is_finite()) {
+        args.push(format!("-GPSLongitude={}", lon.abs()));
+        args.push(format!(
+            "-GPSLongitudeRef={}",
+            if lon < 0.0 { "W" } else { "E" }
+        ));
+    }
+    if exif.gps_lat.is_some() || exif.gps_lon.is_some() || exif.gps_altitude.is_some() {
+        args.push("-GPSVersionID=2.3.0.0".to_string());
+        args.push("-GPSMapDatum=WGS-84".to_string());
+        if let Some(date_taken) = exif.date_taken.as_deref() {
+            if let Some((date, time)) = split_exif_datetime(date_taken) {
+                args.push(format!("-GPSDateStamp={date}"));
+                args.push(format!("-GPSTimeStamp={time}"));
+            }
+        }
+    }
+    if let Some(alt) = exif.gps_altitude.filter(|v| v.is_finite()) {
+        args.push(format!("-GPSAltitude={}", alt.abs()));
+        args.push(format!(
+            "-GPSAltitudeRef#={}",
+            if alt < 0.0 { 1 } else { 0 }
+        ));
+    }
+
+    args
+}
+
+fn write_exif_to_file(path: &FsPath, exif: &ExifData) -> Result<(), String> {
+    let mut args = exiftool_args_for_update(exif);
+    if args.len() <= 2 {
+        return Ok(());
+    }
+    args.push(path.to_string_lossy().to_string());
+
+    let output = Command::new("exiftool")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("failed to run exiftool: {e}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        Err(format!(
+            "exiftool failed for {}: {}{}",
+            path.display(),
+            stderr.trim(),
+            stdout.trim()
+        ))
+    }
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct TrashManifestEntry {
@@ -171,6 +308,10 @@ pub async fn stage_op(
         .get("replace")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+    let exif = req
+        .get("exif")
+        .cloned()
+        .and_then(|v| serde_json::from_value::<ExifData>(v).ok());
 
     if src.is_empty() || !safe_subpath(src) {
         return (
@@ -193,6 +334,7 @@ pub async fn stage_op(
         "copy" => OpKind::Copy,
         "rename" => OpKind::Rename,
         "restore" => OpKind::Restore,
+        "exif" => OpKind::Exif,
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -205,6 +347,13 @@ pub async fn stage_op(
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({"error":"dst required"})),
+        );
+    }
+
+    if matches!(kind_enum, OpKind::Exif) && exif.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error":"exif required"})),
         );
     }
 
@@ -252,6 +401,7 @@ pub async fn stage_op(
         src: src.to_string(),
         dst,
         replace,
+        exif,
     };
     state.staged_ops.write().await.push(op.clone());
     (StatusCode::CREATED, Json(json!({"staged": op})))
@@ -456,6 +606,18 @@ pub async fn apply_stage(
                         copy_cache_entries(&state, &op.src, &dst_rel).await;
                         applied += 1;
                     }
+                }
+            }
+            OpKind::Exif => {
+                if let Some(exif) = op.exif {
+                    if let Err(e) = write_exif_to_file(&src, &exif) {
+                        return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
+                    }
+                    remove_cache_entries(&state, &op.src).await;
+                    remove_persisted_exif_override(&state, &photos_dir, &op.src)
+                        .await
+                        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e))?;
+                    applied += 1;
                 }
             }
         }

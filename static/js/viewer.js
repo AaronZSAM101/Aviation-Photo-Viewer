@@ -7,6 +7,110 @@ import { stageSingleDelete } from './api.js';
 import { updateCardStagedIndicators } from './render.js';
 import { syncRoute } from './router.js';
 
+const gpsCoordModes = {
+  lat: 'dms',
+  lon: 'dms',
+};
+
+function gpsRef(value, positiveLabel, negativeLabel) {
+  if (typeof value === 'string' && value.trim()) {
+    const v = value.trim().toUpperCase();
+    if (v.includes('S') || v.includes('W') || v.includes('SOUTH') || v.includes('WEST')) return negativeLabel;
+    if (v.includes('N') || v.includes('E') || v.includes('NORTH') || v.includes('EAST')) return positiveLabel;
+    return value.trim();
+  }
+  return null;
+}
+
+function gpsSuffix(ref, positiveLabel, negativeLabel) {
+  if (ref === positiveLabel) {
+    if (positiveLabel === '北纬') return 'N';
+    if (positiveLabel === '东经') return 'E';
+  }
+  if (ref === negativeLabel) {
+    if (negativeLabel === '南纬') return 'S';
+    if (negativeLabel === '西经') return 'W';
+  }
+  return ref;
+}
+
+function formatGpsCoord(value, refValue, positiveLabel, negativeLabel) {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const num = Number(value);
+  const ref = gpsRef(refValue, positiveLabel, negativeLabel) || (num < 0 ? negativeLabel : positiveLabel);
+  const suffix = gpsSuffix(ref, positiveLabel, negativeLabel);
+  const abs = Math.abs(num);
+  const deg = Math.floor(abs);
+  const minFloat = (abs - deg) * 60;
+  const min = Math.floor(minFloat);
+  const sec = (minFloat - min) * 60;
+  return `${deg}° ${min}' ${sec.toFixed(3)}" ${suffix}`;
+}
+
+function formatGpsDecimal(value, refValue, positiveLabel, negativeLabel) {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const num = Number(value);
+  const ref = gpsRef(refValue, positiveLabel, negativeLabel) || (num < 0 ? negativeLabel : positiveLabel);
+  const suffix = gpsSuffix(ref, positiveLabel, negativeLabel);
+  return `${Math.abs(num).toFixed(6)}° ${suffix}`;
+}
+
+function formatGpsAltitude(value) {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const meters = Number(value);
+  const feet = meters * 3.280839895;
+  const sign = meters < 0 ? '-' : '';
+  return `${sign}${Math.abs(meters).toFixed(2)} 米 (${sign}${Math.abs(feet).toFixed(1)} 英尺)`;
+}
+
+function formatGpsDate(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const m = value.trim().match(/^(\d{4})[:\-](\d{1,2})[:\-](\d{1,2})/);
+  if (!m) return value.trim();
+  return `${Number(m[1])}年${Number(m[2])}月${Number(m[3])}日`;
+}
+
+function formatGpsTime(value) {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  return `${value.trim()} 世界标准时间`;
+}
+
+function formatGpsDateTime(dateValue, timeValue) {
+  const date = formatGpsDate(dateValue);
+  const time = formatGpsTime(timeValue);
+  if (date && time) return `${date} ${time}`;
+  return date || time;
+}
+
+function formatGpsDisplay(e, type) {
+  const isLat = type === 'lat';
+  const value = isLat ? e.gps_lat : e.gps_lon;
+  const ref = isLat ? e.gps_lat_ref : e.gps_lon_ref;
+  const positiveLabel = isLat ? '北纬' : '东经';
+  const negativeLabel = isLat ? '南纬' : '西经';
+  return gpsCoordModes[type] === 'decimal'
+    ? formatGpsDecimal(value, ref, positiveLabel, negativeLabel)
+    : formatGpsCoord(value, ref, positiveLabel, negativeLabel);
+}
+
+function gpsToggleTitle(type) {
+  return gpsCoordModes[type] === 'decimal' ? '点击切换为度分秒' : '点击切换为十进制度';
+}
+
+function bindGpsToggles(e) {
+  dom.vInfo.querySelectorAll('.rk[data-gps-toggle]').forEach(label => {
+    label.addEventListener('click', () => {
+      const type = label.dataset.gpsToggle;
+      if (!type || !gpsCoordModes[type]) return;
+      gpsCoordModes[type] = gpsCoordModes[type] === 'decimal' ? 'dms' : 'decimal';
+      const row = label.closest('.row');
+      const value = row?.querySelector('.rv');
+      if (value) value.textContent = formatGpsDisplay(e, type) || '';
+      label.title = gpsToggleTitle(type);
+    });
+  });
+}
+
 export function openViewer(idx) {
   state.viewerIndex = idx;
   // 每次打开都重置切换状态
@@ -172,17 +276,27 @@ function renderInfoPanel(p) {
       ['曝光补偿', e.exposure_bias], ['测光模式', e.metering_mode],
       ['白平衡', e.white_balance], ['闪光灯', e.flash],
     ]},
-    hasExif && e.gps_lat != null && { title: 'GPS', rows: [
-      ['纬度', e.gps_lat?.toFixed(6) + '°'],
-      ['经度', e.gps_lon?.toFixed(6) + '°'],
+    hasExif && (
+      e.gps_lat != null || e.gps_lon != null || e.gps_altitude != null ||
+      e.gps_date_stamp || e.gps_time_stamp || e.gps_version_id || e.gps_map_datum
+    ) && { title: 'GPS', rows: [
+      ['海拔高度', formatGpsAltitude(e.gps_altitude)],
+      ['日期时间戳', formatGpsDateTime(e.gps_date_stamp, e.gps_time_stamp)],
+      ['GPS 版本', e.gps_version_id],
+      ['纬度', formatGpsDisplay(e, 'lat'), 'lat'],
+      ['经度', formatGpsDisplay(e, 'lon'), 'lon'],
+      ['映射数据', e.gps_map_datum],
     ]},
   ].filter(Boolean);
 
   const sectionsHTML = sections.map(s => `
     <div class="sec">
       <div class="sec-title">${s.title}</div>
-      ${s.rows.filter(([, v]) => v != null).map(([k, v]) => `
-        <div class="row"><span class="rk">${k}</span><span class="rv">${v}</span></div>
+      ${s.rows.filter(([, v]) => v != null).map(([k, v, gpsToggle]) => `
+        <div class="row">
+          <span class="rk${gpsToggle ? ' gps-toggle-key' : ''}"${gpsToggle ? ` data-gps-toggle="${gpsToggle}" title="${gpsToggleTitle(gpsToggle)}"` : ''}>${k}</span>
+          <span class="rv">${v}</span>
+        </div>
       `).join('')}
     </div>`).join('')
     + (!hasExif ? '<div class="no-exif-note">此文件不含 EXIF 数据</div>' : '');
@@ -190,6 +304,7 @@ function renderInfoPanel(p) {
   // 这样在横向布局（手机竖屏 charts-open / 手机横屏 / 桌面）下，
   // 整组 EXIF 才是 #vinfo 的"一个 flex 列"，不会被拆成多列。
   dom.vInfo.innerHTML = `<div class="vinfo-sections">${sectionsHTML}</div>`;
+  bindGpsToggles(e);
   syncChartHost();
 }
 

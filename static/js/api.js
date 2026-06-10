@@ -130,6 +130,7 @@ export async function fetchStagedOps() {
     const list = await res.json();
     state.stagedDeletes    = new Set(list.filter(o => o.kind === 'delete').map(o => o.src));
     state.stagedRenameSrcs = new Set(list.filter(o => o.kind === 'rename').map(o => o.src));
+    state.stagedExifSrcs   = new Set(list.filter(o => o.kind === 'exif').map(o => o.src));
     state.stagedRenameMap  = new Map(
       list.filter(o => o.kind === 'rename' && o.dst).map(o => [o.src, o.dst])
     );
@@ -137,6 +138,7 @@ export async function fetchStagedOps() {
   } catch (e) {
     state.stagedDeletes    = new Set();
     state.stagedRenameSrcs = new Set();
+    state.stagedExifSrcs   = new Set();
     state.stagedRenameMap  = new Map();
     state.stagedOpTargets  = new Set();
   }
@@ -213,6 +215,7 @@ export async function clearAllStaged() {
   await fetch('/api/stage/clear', { method: 'POST' });
   state.stagedDeletes.clear();
   state.stagedRenameSrcs.clear();
+  state.stagedExifSrcs.clear();
   state.stagedOpTargets.clear();
   clearSelection();
   updateCardStagedIndicators();
@@ -222,10 +225,18 @@ export async function clearAllStaged() {
 export async function refreshStagedList() {
   const res  = await fetch('/api/stage/list', { cache: 'no-store' });
   const list = await res.json();
+  const kindLabel = {
+    delete: '删除',
+    move: '移动',
+    copy: '复制',
+    rename: '重命名',
+    restore: '恢复',
+    exif: 'EXIF',
+  };
   const html = list.length ? list.map(o => `
     <div class="staged-item">
       <div class="staged-item-info">
-        <strong>${o.kind}</strong> ${o.src}${o.dst ? ' → ' + o.dst : ''}
+        <strong>${kindLabel[o.kind] || o.kind}</strong> ${o.src}${o.dst ? ' → ' + o.dst : ''}
       </div>
       <div class="staged-item-actions">
         ${state.readOnly ? '' : `<button data-action="remove-staged" data-id="${o.id}">删除</button>`}

@@ -21,8 +21,16 @@ pub struct ExifData {
     pub focal_length_35mm: Option<String>,
     pub image_width: Option<u32>,
     pub image_height: Option<u32>,
+    pub gps_altitude: Option<f64>,
+    pub gps_altitude_ref: Option<String>,
     pub gps_lat: Option<f64>,
+    pub gps_lat_ref: Option<String>,
     pub gps_lon: Option<f64>,
+    pub gps_lon_ref: Option<String>,
+    pub gps_date_stamp: Option<String>,
+    pub gps_time_stamp: Option<String>,
+    pub gps_version_id: Option<String>,
+    pub gps_map_datum: Option<String>,
     pub flash: Option<String>,
     pub white_balance: Option<String>,
     pub metering_mode: Option<String>,
@@ -116,6 +124,7 @@ pub enum OpKind {
     Copy,
     Rename,
     Restore,
+    Exif,
 }
 
 /// 待处理的文件操作
@@ -127,6 +136,8 @@ pub struct StagedOp {
     pub dst: Option<String>,
     #[serde(default)]
     pub replace: bool,
+    #[serde(default)]
+    pub exif: Option<ExifData>,
 }
 
 /// 照片元数据

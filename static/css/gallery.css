@@ -21,6 +21,7 @@
 .badge{position:absolute;font-family:var(--mono);font-size:9px;padding:2px 5px;border-radius:3px;background:var(--badge-bg);color:rgba(255,255,255,.85)}
 .badge.no-exif{top:6px;right:6px;color:rgba(255,255,255,.65)}
 .badge.rename{bottom:6px;right:6px;background:var(--accent2-strong);color:#fff;letter-spacing:.05em;z-index:6}
+.badge.exif{top:26px;right:6px;background:var(--accent2-strong);color:#fff;letter-spacing:.05em;z-index:6}
 .badge.num{bottom:6px;left:6px;color:var(--badge-num);opacity:.95}
 .card-info{padding:7px 9px;border-top:1px solid var(--border);background:linear-gradient(180deg,rgba(255,255,255,.015),transparent)}
 .card-name{font-family:var(--mono);font-size:10px;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px}
@@ -31,6 +32,8 @@
 .card.staged-delete:hover{border-color:var(--danger-hover)}
 .card.staged-rename{border-color:var(--accent2)}
 .card.staged-rename:hover{border-color:var(--accent2-strong)}
+.card.staged-exif{border-color:var(--accent2)}
+.card.staged-exif:hover{border-color:var(--accent2-strong)}
 .card.staged-delete .thumb img{opacity:.45;filter:grayscale(.5)}
 .card.staged-delete .thumb img.loaded{opacity:.45}
 .badge.staged{top:6px;right:6px;background:var(--danger-strong);color:var(--on-danger);letter-spacing:.05em;z-index:6}
@@ -40,4 +43,3 @@
   content-visibility:auto;
   contain-intrinsic-size: 260px;
 }
-

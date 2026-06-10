@@ -13,6 +13,7 @@ const fields = [
   ['focal_length_35mm', '等效焦距', 'text'],
   ['image_width', '图像宽度', 'number', '如 1920'],
   ['image_height', '图像高度', 'number', '如 1280'],
+  ['gps_altitude', '海拔高度', 'number', '如 21.55'],
   ['gps_lat', '纬度', 'number', '如 39.9042'],
   ['gps_lon', '经度', 'number', '如 116.4074'],
   ['flash', '闪光灯', 'text'],
@@ -124,14 +125,14 @@ export async function commitExifEdit() {
   }
 
   const payload = buildPayload();
-  const res = await fetch('/api/exif/update', {
+  const res = await fetch('/api/stage', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ kind: 'exif', ...payload }),
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || '保存 EXIF 失败');
+    throw new Error(text || '加入 EXIF 分批失败');
   }
   return res.json();
 }

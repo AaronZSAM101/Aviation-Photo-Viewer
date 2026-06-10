@@ -62,11 +62,14 @@ export function updateCardStagedIndicators() {
     const sp        = card.dataset.sp;
     const isDeleted = state.stagedDeletes.has(sp);
     const isRenamed = state.stagedRenameSrcs.has(sp);
+    const hasExifOp = state.stagedExifSrcs.has(sp);
     card.classList.toggle('staged-delete', isDeleted);
     card.classList.toggle('staged-rename', isRenamed);
+    card.classList.toggle('staged-exif', hasExifOp);
     const thumb = card.querySelector('.thumb');
     let deleteBadge = thumb && thumb.querySelector('.badge.staged');
     let renameBadge = thumb && thumb.querySelector('.badge.rename');
+    let exifBadge = thumb && thumb.querySelector('.badge.exif');
     if (isDeleted && !deleteBadge && thumb) {
       const b = document.createElement('span');
       b.className = 'badge staged';
@@ -86,6 +89,15 @@ export function updateCardStagedIndicators() {
     } else if (isRenamed && renameBadge) {
       renameBadge.textContent = renameBadgeLabel(sp);
       renameBadge.title = renameBadgeTitle(sp);
+    }
+    if (hasExifOp && !exifBadge && thumb) {
+      const b = document.createElement('span');
+      b.className = 'badge exif';
+      b.textContent = '待EXIF';
+      b.title = '待写入 EXIF';
+      thumb.appendChild(b);
+    } else if (!hasExifOp && exifBadge) {
+      exifBadge.remove();
     }
   });
 }
@@ -349,6 +361,7 @@ function makeCard(p, idx, photosIdx) {
   const sp         = subpath(p);
   const isStaged   = state.stagedDeletes.has(sp);
   const isRenamed  = state.stagedRenameSrcs.has(sp);
+  const hasExifOp  = state.stagedExifSrcs.has(sp);
   const renameText = isRenamed ? renameBadgeLabel(sp) : '';
   const isSelected = state.selectedSubpaths.has(sp);
 
@@ -357,6 +370,7 @@ function makeCard(p, idx, photosIdx) {
     'card' +
     (isStaged   ? ' staged-delete' : '') +
     (isRenamed  ? ' staged-rename' : '') +
+    (hasExifOp  ? ' staged-exif'   : '') +
     (isSelected ? ' selected'      : '');
   card.dataset.sp = sp;
   card.dataset.photosIdx = String(photosIdx);
@@ -370,6 +384,7 @@ function makeCard(p, idx, photosIdx) {
       ${!hasExif ? '<span class="badge no-exif">NO EXIF</span>' : ''}
       ${isStaged  ? '<span class="badge staged">待删除</span>' : ''}
       ${isRenamed ? `<span class="badge rename" title="${renameBadgeTitle(sp)}">${renameText}</span>` : ''}
+      ${hasExifOp ? '<span class="badge exif" title="待写入 EXIF">待EXIF</span>' : ''}
       <span class="badge num">#${idx}</span>
     </div>
     <div class="card-info">

@@ -28,8 +28,16 @@ fn is_empty_override(exif: &ExifData) -> bool {
         && exif.focal_length_35mm.is_none()
         && exif.image_width.is_none()
         && exif.image_height.is_none()
+        && exif.gps_altitude.is_none()
+        && exif.gps_altitude_ref.is_none()
         && exif.gps_lat.is_none()
+        && exif.gps_lat_ref.is_none()
         && exif.gps_lon.is_none()
+        && exif.gps_lon_ref.is_none()
+        && exif.gps_date_stamp.is_none()
+        && exif.gps_time_stamp.is_none()
+        && exif.gps_version_id.is_none()
+        && exif.gps_map_datum.is_none()
         && exif.flash.is_none()
         && exif.white_balance.is_none()
         && exif.metering_mode.is_none()
@@ -57,8 +65,16 @@ pub fn apply_exif_override(base: &mut ExifData, override_exif: &ExifData) {
     copy_field!(focal_length_35mm);
     copy_field!(image_width);
     copy_field!(image_height);
+    copy_field!(gps_altitude);
+    copy_field!(gps_altitude_ref);
     copy_field!(gps_lat);
+    copy_field!(gps_lat_ref);
     copy_field!(gps_lon);
+    copy_field!(gps_lon_ref);
+    copy_field!(gps_date_stamp);
+    copy_field!(gps_time_stamp);
+    copy_field!(gps_version_id);
+    copy_field!(gps_map_datum);
     copy_field!(flash);
     copy_field!(white_balance);
     copy_field!(metering_mode);
