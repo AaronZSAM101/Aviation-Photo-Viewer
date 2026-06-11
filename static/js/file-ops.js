@@ -11,6 +11,27 @@ function listFolderOptions() {
   return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'));
 }
 
+async function loadFolderOptions() {
+  try {
+    const res = await fetch('/api/folders', { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.statusText);
+    const folders = await res.json();
+    const set = new Set(['', ...folders.map(folder => String(folder || '').trim())]);
+    state.photos.forEach(p => set.add((p.folder || '').trim()));
+    return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'));
+  } catch {
+    return listFolderOptions();
+  }
+}
+
+function renderFolderOptions(folders, selectedFolder = '') {
+  return folders.map(folder => {
+    const label = folder || '(根目录)';
+    const selected = folder === selectedFolder ? ' selected' : '';
+    return `<option value="${folder}"${selected}>${label}</option>`;
+  }).join('');
+}
+
 function pathExistsInCurrentState(dst, src) {
   const occupiedByPhoto = state.photos.some(p => {
     const sp = subpath(p);
@@ -21,7 +42,7 @@ function pathExistsInCurrentState(dst, src) {
   return state.stagedOpTargets.has(dst) && dst !== src;
 }
 
-export function openFileOpDialog(kind, src) {
+export async function openFileOpDialog(kind, src) {
   if (state.readOnly) {
     alert('当前为只读模式，管理操作已禁用');
     return;
@@ -43,18 +64,18 @@ export function openFileOpDialog(kind, src) {
 
   if (kind === 'move') {
     const sel = $('modal-move-folder');
-    const options = listFolderOptions().map(folder => {
-      const label    = folder || '(根目录)';
-      const selected = folder === parsed.folder ? ' selected' : '';
-      return `<option value="${folder}"${selected}>${label}</option>`;
-    }).join('');
-    sel.innerHTML = options;
+    sel.innerHTML = renderFolderOptions(listFolderOptions(), parsed.folder);
     const updatePreview = () => {
       const dstFolder = sel.value;
       $('modal-move-preview').textContent = '将移动到: ' + joinSubpath(dstFolder, parsed.name);
     };
     sel.onchange = updatePreview;
     updatePreview();
+    loadFolderOptions().then(folders => {
+      const current = sel.value;
+      sel.innerHTML = renderFolderOptions(folders, current);
+      updatePreview();
+    });
   }
 
   $('modal-file-op').classList.add('show');
@@ -87,6 +108,7 @@ export async function commitFileOp() {
     const dstFolder = $('modal-move-folder').value;
     dst = joinSubpath(dstFolder, op.srcName);
     if (dst === op.src) { alert('目标路径与原路径相同'); return; }
+    replace = true;
   } else {
     dst = $('modal-file-op-dst').value.trim();
     if (!dst) { alert('请输入目标'); return; }
@@ -105,7 +127,7 @@ export async function commitFileOp() {
   render();
 }
 
-export function openBulkMoveDialog() {
+export async function openBulkMoveDialog() {
   if (state.readOnly) {
     alert('当前为只读模式，管理操作已禁用');
     return;
@@ -119,11 +141,7 @@ export function openBulkMoveDialog() {
   $('modal-bulk-move-count').textContent = `${sels.length} 个照片`;
   
   const sel = $('modal-bulk-move-folder');
-  const options = listFolderOptions().map(folder => {
-    const label    = folder || '(根目录)';
-    return `<option value="${folder}">${label}</option>`;
-  }).join('');
-  sel.innerHTML = options;
+  sel.innerHTML = renderFolderOptions(listFolderOptions());
   
   const updatePreview = () => {
     const dstFolder = sel.value;
@@ -132,6 +150,11 @@ export function openBulkMoveDialog() {
   };
   sel.onchange = updatePreview;
   updatePreview();
+  loadFolderOptions().then(folders => {
+    const current = sel.value;
+    sel.innerHTML = renderFolderOptions(folders, current);
+    updatePreview();
+  });
   
   $('modal-bulk-move').classList.add('show');
 }

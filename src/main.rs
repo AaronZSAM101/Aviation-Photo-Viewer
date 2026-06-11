@@ -329,6 +329,7 @@ async fn main() {
         .route("/api/config", get(handlers::app_config))
         .route("/api/cache/refresh", post(handlers::refresh_caches))
         .route("/api/photos", get(handlers::list_photos))
+        .route("/api/folders", get(handlers::list_folders))
         .route("/photos/*subpath", get(handlers::serve_photo))
         .route("/preview/*subpath", get(handlers::serve_preview))
         .route("/thumb/*subpath", get(handlers::serve_thumb))

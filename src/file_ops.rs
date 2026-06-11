@@ -208,6 +208,36 @@ struct TrashManifestEntry {
 
 type TrashManifest = HashMap<String, TrashManifestEntry>;
 
+fn staged_op_key(op: &StagedOp) -> String {
+    format!(
+        "{:?}\0{}\0{}",
+        op.kind,
+        op.src,
+        op.dst.as_deref().unwrap_or("")
+    )
+}
+
+fn dedupe_staged_ops(ops: &mut Vec<StagedOp>) {
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let mut deduped: Vec<StagedOp> = Vec::with_capacity(ops.len());
+
+    for op in ops.drain(..) {
+        let key = staged_op_key(&op);
+        if let Some(index) = seen.get(&key).copied() {
+            let existing = &mut deduped[index];
+            existing.replace = existing.replace || op.replace;
+            if op.exif.is_some() {
+                existing.exif = op.exif;
+            }
+        } else {
+            seen.insert(key, deduped.len());
+            deduped.push(op);
+        }
+    }
+
+    *ops = deduped;
+}
+
 fn is_generated_trash_name(name: &str) -> bool {
     name.len() == 32 && name.chars().all(|c| c.is_ascii_hexdigit())
 }
@@ -395,6 +425,12 @@ pub async fn stage_op(
         }
     }
 
+    let replace = if matches!(kind_enum, OpKind::Move) {
+        true
+    } else {
+        replace
+    };
+
     let op = StagedOp {
         id: Uuid::new_v4().to_string(),
         kind: kind_enum,
@@ -403,15 +439,39 @@ pub async fn stage_op(
         replace,
         exif,
     };
-    state.staged_ops.write().await.push(op.clone());
-    (StatusCode::CREATED, Json(json!({"staged": op})))
+
+    let mut staged_ops = state.staged_ops.write().await;
+    dedupe_staged_ops(&mut staged_ops);
+    if let Some(existing) = staged_ops
+        .iter_mut()
+        .find(|existing| staged_op_key(existing) == staged_op_key(&op))
+    {
+        existing.replace = existing.replace || op.replace;
+        if op.exif.is_some() {
+            existing.exif = op.exif.clone();
+        }
+        return (
+            StatusCode::OK,
+            Json(json!({"staged": existing.clone(), "deduped": true})),
+        );
+    }
+
+    staged_ops.push(op.clone());
+    (
+        StatusCode::CREATED,
+        Json(json!({"staged": op, "deduped": false})),
+    )
 }
 
 /// 列出所有待处理的文件操作
 pub async fn list_stage(
     axum::extract::State(state): axum::extract::State<AppState>,
 ) -> Json<Vec<StagedOp>> {
-    let ops = state.staged_ops.read().await.clone();
+    let ops = {
+        let mut ops = state.staged_ops.write().await;
+        dedupe_staged_ops(&mut ops);
+        ops.clone()
+    };
     Json(ops)
 }
 
@@ -435,9 +495,10 @@ pub async fn apply_stage(
         return Err((StatusCode::FORBIDDEN, "read-only mode enabled".to_string()));
     }
 
-    // 步骤1：拍快照（read lock，快速释放），用于冲突预检
+    // 步骤1：整理队列并拍快照（write lock 只用于去重，快速释放），用于冲突预检
     let ops_snapshot = {
-        let ops = state.staged_ops.read().await;
+        let mut ops = state.staged_ops.write().await;
+        dedupe_staged_ops(&mut ops);
         if ops.is_empty() {
             return Ok((StatusCode::OK, Json(json!({"applied":0}))));
         }

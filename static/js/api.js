@@ -187,7 +187,7 @@ export async function stageBulkMove(dstFolder) {
     await fetch('/api/stage', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ kind: 'move', src: s, dst }),
+      body: JSON.stringify({ kind: 'move', src: s, dst, replace: true }),
     });
   }
   clearSelection();
@@ -205,7 +205,8 @@ export async function applyStaged() {
     closeModal('modal-staged');
     loadPhotos();
   } else {
-    alert('应用失败');
+    const msg = await res.text();
+    alert('应用失败: ' + (msg || res.statusText));
   }
 }
 

@@ -116,7 +116,7 @@ pub struct AppState {
 }
 
 /// 文件操作类型
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum OpKind {
     Delete,

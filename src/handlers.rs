@@ -108,7 +108,9 @@ use crate::cache_paths;
 use crate::exif::extract_exif;
 use crate::exif_edit::apply_exif_override;
 use crate::models::{AppState, CachedMeta, PhotoMeta, PhotosQuery};
-use crate::utils::{collect_photo_entries, metadata_mtime_key, safe_subpath};
+use crate::utils::{
+    collect_photo_entries, collect_photo_folders, metadata_mtime_key, safe_subpath,
+};
 
 /// 把整个 static/ 目录嵌入二进制（编译期）
 #[derive(rust_embed::RustEmbed)]
@@ -482,6 +484,14 @@ pub async fn list_photos(
     );
 
     Json(photos)
+}
+
+pub async fn list_folders(State(state): State<AppState>) -> Json<Vec<String>> {
+    let photos_dir = state.photos_dir.read().await.clone();
+    let folders = tokio::task::spawn_blocking(move || collect_photo_folders(photos_dir))
+        .await
+        .unwrap_or_default();
+    Json(folders)
 }
 
 /// 提供原始照片

@@ -169,3 +169,38 @@ pub fn collect_photo_entries(
 
     (entries, truncated)
 }
+
+pub fn collect_photo_folders(photos_dir: PathBuf) -> Vec<String> {
+    use walkdir::WalkDir;
+
+    let photos_root = photos_dir.clone();
+    let mut folders = Vec::new();
+
+    for entry in WalkDir::new(&photos_dir)
+        .max_depth(4)
+        .into_iter()
+        .filter_entry(|entry| should_descend(entry, &photos_root))
+        .filter_map(|e| e.ok())
+    {
+        if entry.depth() == 0 || !entry.file_type().is_dir() {
+            continue;
+        }
+
+        let Some(folder) = entry
+            .path()
+            .strip_prefix(&photos_root)
+            .ok()
+            .and_then(|p| p.to_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+        else {
+            continue;
+        };
+
+        folders.push(folder);
+    }
+
+    folders.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(b)));
+    folders.dedup();
+    folders
+}
