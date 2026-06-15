@@ -6,19 +6,19 @@ metadata:
 spec:
   containers:
     - name: photo-viewer
-      image: ghcr.io/aaronzsam101/aviation-photo-viewer:latest
+      image: localhost/photo-viewer:latest
       ports:
-        - containerPort: 3000
+        - containerPort: 80
           hostPort: 3000
       env:
         - name: PHOTOS_DIR
           value: /photos
-        - name: PORT
-          value: "3000"
-        - name: HOST
-          value: 0.0.0.0
         - name: READ_ONLY
-          value: "true"
+          value: "false"
+        - name: PHASH_WARMUP
+          value: "false"
+        - name: SIMILAR_SCAN_WORKERS
+          value: "4"
       volumeMounts:
         - name: photos-volume
           mountPath: /photos

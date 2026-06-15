@@ -25,10 +25,10 @@ ENV PHOTO_VIEWER_VERSION_SOURCE=${PHOTO_VIEWER_VERSION_SOURCE}
 RUN touch src/main.rs && cargo build --release --locked
 
 # ── Stage 2: Runtime ──────────────────────────────────────────────────────────
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 RUN apt-get update && \
-    apt-get install -y ca-certificates && \
+    apt-get install -y ca-certificates libimage-exiftool-perl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/photo-viewer /usr/local/bin/photo-viewer
