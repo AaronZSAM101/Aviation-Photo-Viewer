@@ -313,7 +313,11 @@ pub async fn lens_model_for_photo(
 
     #[cfg(not(target_os = "macos"))]
     {
-        Ok(Json(serde_json::json!({"lens_model": null})))
+        let lens = tokio::task::spawn_blocking(move || lens_model_from_exiftool(&path))
+            .await
+            .ok()
+            .flatten();
+        Ok(Json(serde_json::json!({"lens_model": lens})))
     }
 }
 
