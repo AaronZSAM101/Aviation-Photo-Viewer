@@ -109,6 +109,8 @@ pub struct AppState {
     pub staged_ops: Arc<RwLock<Vec<StagedOp>>>,
     /// 相对路径 → 缓存的EXIF元数据
     pub meta_cache: Arc<RwLock<HashMap<String, CachedMeta>>>,
+    /// 相对路径 → 正在后台提取 EXIF 的 (mtime, size)，避免重复排队同一文件版本
+    pub meta_extract_inflight: Arc<RwLock<HashMap<String, (u64, u64)>>>,
     /// 相对路径 → 缓存的感知哈希
     pub phash_cache: Arc<RwLock<HashMap<String, CachedHash>>>,
     /// 后台相似照片扫描任务

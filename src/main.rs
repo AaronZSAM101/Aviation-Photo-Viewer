@@ -169,6 +169,7 @@ async fn main() {
         preview_cache: Arc::new(RwLock::new(HashMap::new())),
         staged_ops: Arc::new(RwLock::new(Vec::new())),
         meta_cache: Arc::new(RwLock::new(HashMap::new())),
+        meta_extract_inflight: Arc::new(RwLock::new(HashMap::new())),
         phash_cache: Arc::new(RwLock::new(HashMap::new())),
         similar_jobs: Arc::new(RwLock::new(HashMap::new())),
         phash_warmup_running: Arc::new(std::sync::Mutex::new(false)),

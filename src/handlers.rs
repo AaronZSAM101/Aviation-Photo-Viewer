@@ -161,6 +161,7 @@ pub async fn refresh_caches(
     {
         state.thumb_cache.write().await.clear();
         state.preview_cache.write().await.clear();
+        state.meta_extract_inflight.write().await.clear();
     }
 
     match fs::remove_file(&cache_file).await {
@@ -189,6 +190,13 @@ pub async fn refresh_caches(
                 .await
                 .unwrap_or_default();
         let total = entries.len();
+        {
+            let mut inflight = bg_state.meta_extract_inflight.write().await;
+            inflight.clear();
+            for e in &entries {
+                inflight.insert(e.subpath.clone(), (e.mtime, e.size));
+            }
+        }
 
         let rebuilt: Result<Vec<(String, CachedMeta)>, _> =
             tokio::task::spawn_blocking(move || {
@@ -231,6 +239,7 @@ pub async fn refresh_caches(
                 started.elapsed()
             );
         }
+        bg_state.meta_extract_inflight.write().await.clear();
     });
 
     Ok(Json(serde_json::json!({
@@ -346,7 +355,7 @@ pub async fn list_photos(
     // 缓存key = subpath; 当 (mtime, size) 改变时失效。
     // mtime 使用微秒级指纹，避免同一秒内覆盖文件时继续复用旧 EXIF。
     let mut hits = 0usize;
-    let mut to_extract: Vec<(usize, PathBuf, String, u64, u64)> = Vec::new();
+    let mut extract_candidates: Vec<(usize, PathBuf, String, u64, u64)> = Vec::new();
     let mut cached: HashMap<usize, (crate::models::ExifData, i64)> =
         HashMap::with_capacity(entries.len());
     {
@@ -372,10 +381,36 @@ pub async fn list_photos(
                     if has_display_exif(&c.exif) {
                         cached.insert(i, (c.exif.clone(), c.sort_key));
                     }
-                    to_extract.push((i, e.path.clone(), e.subpath.clone(), e.mtime, e.size));
+                    extract_candidates.push((
+                        i,
+                        e.path.clone(),
+                        e.subpath.clone(),
+                        e.mtime,
+                        e.size,
+                    ));
                 }
-                None => to_extract.push((i, e.path.clone(), e.subpath.clone(), e.mtime, e.size)),
+                None => {
+                    extract_candidates.push((i, e.path.clone(), e.subpath.clone(), e.mtime, e.size))
+                }
             }
+        }
+    }
+    let mut to_extract: Vec<(usize, PathBuf, String, u64, u64)> =
+        Vec::with_capacity(extract_candidates.len());
+    if !extract_candidates.is_empty() {
+        let mut inflight = state.meta_extract_inflight.write().await;
+        for (i, path, subpath, mtime, size) in extract_candidates {
+            let already_running =
+                inflight
+                    .get(&subpath)
+                    .is_some_and(|(active_mtime, active_size)| {
+                        *active_mtime == mtime && *active_size == size
+                    });
+            if already_running {
+                continue;
+            }
+            inflight.insert(subpath.clone(), (mtime, size));
+            to_extract.push((i, path, subpath, mtime, size));
         }
     }
 
@@ -388,6 +423,10 @@ pub async fn list_photos(
 
     if !to_extract_batch.is_empty() {
         let bg_items = to_extract_batch.clone();
+        let inflight_items: Vec<(String, u64, u64)> = bg_items
+            .iter()
+            .map(|(_i, _path, subpath, mtime, size)| (subpath.clone(), *mtime, *size))
+            .collect();
         let bg_state = state.clone();
         // 在后台做阻塞的并行提取，不阻塞当前请求
         tokio::spawn(async move {
@@ -423,6 +462,17 @@ pub async fn list_photos(
                 let mut cache = bg_state.meta_cache.write().await;
                 for (sp, m) in new_cache {
                     cache.insert(sp, m);
+                }
+            }
+            let mut inflight = bg_state.meta_extract_inflight.write().await;
+            for (subpath, mtime, size) in inflight_items {
+                if inflight
+                    .get(&subpath)
+                    .is_some_and(|(active_mtime, active_size)| {
+                        *active_mtime == mtime && *active_size == size
+                    })
+                {
+                    inflight.remove(&subpath);
                 }
             }
         });
@@ -719,6 +769,7 @@ pub async fn set_photos_dir(
         *guard = p.clone();
     }
     state.meta_cache.write().await.clear();
+    state.meta_extract_inflight.write().await.clear();
     state.thumb_cache.write().await.clear();
     state.preview_cache.write().await.clear();
 
