@@ -389,6 +389,68 @@
   </div>
 </div>
 
+<div id="modal-gps-map" class="modal">
+  <div class="modal-content gps-map-modal">
+    <div class="modal-header">
+      <h2 class="modal-title">地图</h2>
+      <button class="modal-close" data-close-modal="modal-gps-map">×</button>
+    </div>
+    <div class="modal-body gps-map-modal-body" id="gps-map-large-body"></div>
+  </div>
+</div>
+
+<div id="modal-map-settings" class="modal">
+  <div class="modal-content" style="max-width:620px">
+    <div class="modal-header">
+      <h2 class="modal-title">地图图源</h2>
+      <button class="modal-close" data-close-modal="modal-map-settings">×</button>
+    </div>
+    <div class="modal-body">
+      <label class="map-settings-field">
+        <span>当前图源</span>
+        <select id="map-provider-sel">
+        </select>
+      </label>
+      <label class="map-settings-field">
+        <span>图源名称</span>
+        <input type="text" id="map-source-name" placeholder="例如：我的卫星图" />
+      </label>
+      <label class="map-settings-field">
+        <span>URL 模板</span>
+        <input type="text" id="map-source-template" placeholder="https://example.com/tiles/{z}/{x}/{y}.jpg?key={key}" />
+      </label>
+      <div class="map-settings-row">
+        <label class="map-settings-field">
+          <span>Key</span>
+          <input type="text" id="map-source-key" placeholder="可留空" />
+        </label>
+        <label class="map-settings-field">
+          <span>子域</span>
+          <input type="text" id="map-source-subdomains" placeholder="如 0,1,2,3 或 a,b,c" />
+        </label>
+        <label class="map-settings-field">
+          <span>最大缩放</span>
+          <input type="text" id="map-source-maxzoom" placeholder="1-20" />
+        </label>
+      </div>
+      <div class="map-settings-help">
+        支持占位符：{z} {x} {y} {q} {s} {key}
+      </div>
+      <label class="map-settings-field">
+        <span>新增图源名称</span>
+        <input type="text" id="map-new-source-name" placeholder="新增时使用，例如：天地图-我的Key" />
+      </label>
+    </div>
+    <div class="modal-footer">
+      <button id="btn-delete-map-source">删除自定义</button>
+      <button id="btn-reset-map-settings">重置全部</button>
+      <button id="btn-add-map-source">新增自定义</button>
+      <button data-close-modal="modal-map-settings">取消</button>
+      <button id="btn-save-map-settings" class="primary">保存</button>
+    </div>
+  </div>
+</div>
+
 <div id="modal-setdir" class="modal">
   <div class="modal-content" style="max-width:520px">
     <div class="modal-header">

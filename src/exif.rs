@@ -76,6 +76,71 @@ fn value_f64(v: &Value) -> Option<f64> {
     v.as_f64().or_else(|| v.as_str()?.trim().parse().ok())
 }
 
+fn numeric_mm(raw: &str) -> Option<f64> {
+    let mut start = None;
+    let mut end = 0usize;
+    for (idx, ch) in raw.char_indices() {
+        if start.is_none() && (ch.is_ascii_digit() || ch == '.' || ch == '-') {
+            start = Some(idx);
+        }
+        if start.is_some() {
+            if ch.is_ascii_digit() || ch == '.' || ch == '-' {
+                end = idx + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+    }
+    raw.get(start?..end)?.parse::<f64>().ok()
+}
+
+fn canon_crop_factor(model: &str) -> Option<f64> {
+    let m = model.to_ascii_lowercase();
+    if m.contains("eos 60d")
+        || m.contains("eos 70d")
+        || m.contains("eos 80d")
+        || m.contains("eos 90d")
+        || m.contains("eos 7d")
+        || m.contains("eos 7d mark ii")
+        || m.contains("eos rebel")
+        || m.contains("eos kiss")
+        || m.contains("eos m")
+        || m.contains("eos r7")
+        || m.contains("eos r10")
+        || m.contains("eos r50")
+        || m.contains("eos r100")
+    {
+        return Some(1.6);
+    }
+    if m.contains("eos r")
+        || m.contains("eos 6d")
+        || m.contains("eos 5d")
+        || m.contains("eos 1d x")
+        || m.contains("eos-1d x")
+    {
+        return Some(1.0);
+    }
+    None
+}
+
+fn inferred_crop_factor(make: Option<&str>, model: Option<&str>) -> Option<f64> {
+    let make = make.unwrap_or_default().to_ascii_lowercase();
+    let model = model?;
+    if make.contains("canon") || model.to_ascii_lowercase().contains("canon") {
+        return canon_crop_factor(model);
+    }
+    None
+}
+
+fn infer_focal_length_35mm(d: &ExifData) -> Option<String> {
+    let focal = numeric_mm(d.focal_length.as_deref()?)?;
+    let crop = inferred_crop_factor(d.make.as_deref(), d.model.as_deref())?;
+    if !crop.is_finite() || crop <= 0.0 {
+        return None;
+    }
+    Some(format!("{:.1} mm", focal * crop))
+}
+
 fn first_string(obj: &serde_json::Map<String, Value>, keys: &[&str]) -> Option<String> {
     keys.iter()
         .find_map(|key| obj.get(*key).and_then(value_string))
@@ -183,6 +248,9 @@ fn extract_exif_with_exiftool(path: &Path) -> Option<ExifData> {
     d.f_number = first_string(obj, &["FNumber"]).map(format_f_number);
     d.focal_length = first_string(obj, &["FocalLength"]);
     d.focal_length_35mm = first_string(obj, &["FocalLengthIn35mmFormat"]);
+    if d.focal_length_35mm.is_none() {
+        d.focal_length_35mm = infer_focal_length_35mm(&d);
+    }
     d.image_width = first_u32(obj, &["ExifImageWidth", "ImageWidth"]);
     d.image_height = first_u32(obj, &["ExifImageHeight", "ImageHeight"]);
     d.gps_altitude = first_f64(obj, &["GPSAltitude"]);
@@ -279,6 +347,9 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
 
     d.focal_length_35mm =
         get_any(exif::Tag::FocalLengthIn35mmFilm).map(|f| format!("{} mm", f.display_value()));
+    if d.focal_length_35mm.is_none() {
+        d.focal_length_35mm = infer_focal_length_35mm(&d);
+    }
 
     // 图像尺寸
     fn read_u32(f: &exif::Field) -> Option<u32> {
@@ -349,6 +420,11 @@ pub fn extract_exif(path: &std::path::Path) -> (ExifData, i64) {
         if let Some(fallback) = extract_exif_with_exiftool(path) {
             let sort_key = date_to_sort_key(fallback.date_taken.as_deref());
             return (fallback, sort_key);
+        }
+    }
+    if d.focal_length_35mm.is_none() {
+        if let Some(fallback) = extract_exif_with_exiftool(path) {
+            d.focal_length_35mm = fallback.focal_length_35mm;
         }
     }
 

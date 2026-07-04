@@ -11,6 +11,71 @@ const gpsCoordModes = {
   lat: 'dms',
   lon: 'dms',
 };
+const GPS_MAP_PREF_KEY = 'photo-viewer:gps-map-settings:v1';
+const GPS_CUSTOM_AIRCRAFT_LENGTH_KEY = 'photo-viewer:gps-custom-aircraft-length:v1';
+const GPS_MAP_DEFAULTS = {
+  provider: 'esri',
+  zoom: 16,
+  customSources: [],
+  sourceKeys: {},
+};
+const GPS_CUSTOM_PREFIX = 'custom:';
+const GPS_BUILTIN_SOURCES = [
+  {
+    id: 'esri',
+    name: 'Esri World Imagery',
+    template: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    maxZoom: 19,
+  },
+  {
+    id: 'osm',
+    name: 'OpenStreetMap',
+    template: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    maxZoom: 19,
+  },
+  {
+    id: 'google-sat',
+    name: 'Google Satellite',
+    template: 'https://mt{s}.google.com/vt/lyrs=s&x={x}&y={y}&z={z}',
+    subdomains: '0,1,2,3',
+    maxZoom: 20,
+  },
+  {
+    id: 'google-hybrid',
+    name: 'Google Hybrid',
+    template: 'https://mt{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}',
+    subdomains: '0,1,2,3',
+    maxZoom: 20,
+  },
+  {
+    id: 'bing-aerial',
+    name: 'Bing Aerial',
+    template: 'https://ecn.t{s}.tiles.virtualearth.net/tiles/a{q}.jpeg?g=14027',
+    subdomains: '0,1,2,3',
+    maxZoom: 19,
+  },
+  {
+    id: 'tianditu-img',
+    name: '天地图影像',
+    template: 'https://t{s}.tianditu.gov.cn/img_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=img&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&tk={key}',
+    subdomains: '0,1,2,3,4,5,6,7',
+    maxZoom: 18,
+    needsKey: true,
+  },
+];
+const GPS_BUILTIN_SOURCE_MAP = new Map(GPS_BUILTIN_SOURCES.map(source => [source.id, source]));
+const GPS_FULL_FRAME_SENSOR_WIDTH_MM = 36;
+const GPS_FULL_FRAME_SENSOR_HEIGHT_MM = 24;
+const GPS_APS_C_CROP_FACTOR = 1.6;
+const GPS_NARROWBODY_LENGTH_M = 40;
+const GPS_WIDEBODY_LENGTH_M = 65;
+let gpsMapSettings = loadGpsMapSettings();
+let gpsMapSettingsModalBound = false;
+let gpsMapView = { subpath: null, centerLat: null, centerLon: null };
+let gpsMapMeasure = { subpath: null, active: false, points: [] };
+let gpsMapDrag = null;
+let gpsCustomAircraftLength = loadGpsCustomAircraftLength();
+let gpsCustomAircraftLengthTimer = null;
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 8;
 
@@ -95,8 +160,789 @@ function formatGpsDisplay(e, type) {
     : formatGpsCoord(value, ref, positiveLabel, negativeLabel);
 }
 
+function gpsSignedValue(value, refValue, positiveRef, negativeRef) {
+  if (value == null || !Number.isFinite(Number(value))) return null;
+  const num = Number(value);
+  const ref = gpsRef(refValue, positiveRef, negativeRef);
+  if (ref === negativeRef) return -Math.abs(num);
+  if (ref === positiveRef) return Math.abs(num);
+  return num;
+}
+
+function formatGpsMapDecimal(value, positiveSuffix, negativeSuffix) {
+  const suffix = value < 0 ? negativeSuffix : positiveSuffix;
+  return `${Math.abs(value).toFixed(4)}°${suffix}`;
+}
+
+function escapeAttr(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function normalizeCustomSource(raw, fallbackId = null) {
+  if (!raw || typeof raw !== 'object') return null;
+  const template = typeof raw.template === 'string' ? raw.template.trim() : '';
+  if (!template) return null;
+  const id = typeof raw.id === 'string' && raw.id.trim()
+    ? raw.id.trim()
+    : (fallbackId || `src-${Date.now().toString(36)}`);
+  const name = typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim() : '自定义图源';
+  const key = typeof raw.key === 'string' ? raw.key.trim() : '';
+  const subdomains = typeof raw.subdomains === 'string' ? raw.subdomains.trim() : '';
+  return {
+    id,
+    name,
+    template,
+    key,
+    subdomains,
+    maxZoom: clampGpsMapZoom(raw.maxZoom ?? 20, { maxZoom: 20 }),
+  };
+}
+
+function customProviderId(id) {
+  return `${GPS_CUSTOM_PREFIX}${id}`;
+}
+
+function customSourceId(provider) {
+  return typeof provider === 'string' && provider.startsWith(GPS_CUSTOM_PREFIX)
+    ? provider.slice(GPS_CUSTOM_PREFIX.length)
+    : null;
+}
+
+function gpsMapSourceByProvider(provider) {
+  if (GPS_BUILTIN_SOURCE_MAP.has(provider)) {
+    const source = GPS_BUILTIN_SOURCE_MAP.get(provider);
+    const key = gpsMapSettings.sourceKeys?.[provider] || source.key || '';
+    return { ...source, key };
+  }
+  const customId = customSourceId(provider);
+  if (customId) return gpsMapSettings.customSources.find(source => source.id === customId) || null;
+  return null;
+}
+
+function activeGpsMapSource() {
+  return gpsMapSourceByProvider(gpsMapSettings.provider) || GPS_BUILTIN_SOURCE_MAP.get(GPS_MAP_DEFAULTS.provider);
+}
+
+function maxGpsMapZoom(source = activeGpsMapSource()) {
+  return Math.max(1, Math.min(20, Number(source?.maxZoom) || 19));
+}
+
+function clampGpsMapZoom(zoom, source = GPS_BUILTIN_SOURCE_MAP.get(GPS_MAP_DEFAULTS.provider)) {
+  const n = Number(zoom);
+  if (!Number.isFinite(n)) return Math.min(GPS_MAP_DEFAULTS.zoom, maxGpsMapZoom(source));
+  return Math.max(1, Math.min(maxGpsMapZoom(source), Math.round(n)));
+}
+
+function loadGpsMapSettings() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(GPS_MAP_PREF_KEY) || '{}');
+    let customSources = Array.isArray(raw.customSources)
+      ? raw.customSources.map((source, idx) => normalizeCustomSource(source, `src-${idx + 1}`)).filter(Boolean)
+      : [];
+
+    if (raw.customTemplate && !customSources.length) {
+      const migrated = normalizeCustomSource({
+        id: 'custom-1',
+        name: '自定义图源',
+        template: raw.customTemplate,
+        maxZoom: 20,
+      });
+      if (migrated) customSources = [migrated];
+    }
+
+    let provider = typeof raw.provider === 'string' ? raw.provider : GPS_MAP_DEFAULTS.provider;
+    if (provider === 'satellite') provider = 'esri';
+    if (provider === 'custom') provider = customSources[0] ? customProviderId(customSources[0].id) : GPS_MAP_DEFAULTS.provider;
+    const source = gpsMapSourceByProviderWithList(provider, customSources) || GPS_BUILTIN_SOURCE_MAP.get(GPS_MAP_DEFAULTS.provider);
+    const sourceKeys = raw.sourceKeys && typeof raw.sourceKeys === 'object'
+      ? Object.fromEntries(Object.entries(raw.sourceKeys).map(([key, value]) => [key, String(value || '').trim()]))
+      : {};
+    return {
+      provider: source.id && GPS_BUILTIN_SOURCE_MAP.has(source.id) ? source.id : provider,
+      zoom: clampGpsMapZoom(raw.zoom ?? GPS_MAP_DEFAULTS.zoom, source),
+      customSources,
+      sourceKeys,
+    };
+  } catch {
+    return { ...GPS_MAP_DEFAULTS };
+  }
+}
+
+function gpsMapSourceByProviderWithList(provider, customSources) {
+  if (GPS_BUILTIN_SOURCE_MAP.has(provider)) return GPS_BUILTIN_SOURCE_MAP.get(provider);
+  const customId = customSourceId(provider);
+  if (!customId) return null;
+  return customSources.find(source => source.id === customId) || null;
+}
+
+function saveGpsMapSettings() {
+  try {
+    localStorage.setItem(GPS_MAP_PREF_KEY, JSON.stringify(gpsMapSettings));
+  } catch {}
+}
+
+function gpsProviderLabel(source) {
+  return source?.name || '地图图源';
+}
+
+function gpsMapData(e) {
+  const lat = gpsSignedValue(e.gps_lat, e.gps_lat_ref, '北纬', '南纬');
+  const lon = gpsSignedValue(e.gps_lon, e.gps_lon_ref, '东经', '西经');
+  if (lat == null || lon == null) return null;
+  return {
+    lat,
+    lon,
+    latLabel: formatGpsMapDecimal(lat, 'N', 'S'),
+    lonLabel: formatGpsMapDecimal(lon, 'E', 'W'),
+  };
+}
+
+function gpsTileCoord(lat, lon, zoom) {
+  const n = 2 ** zoom;
+  const clampedLat = Math.max(-85.05112878, Math.min(85.05112878, lat));
+  const latRad = clampedLat * Math.PI / 180;
+  const x = ((lon + 180) / 360) * n;
+  const y = (1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2 * n;
+  return { x, y, n };
+}
+
+function gpsLatLonFromTile(x, y, zoom) {
+  const n = 2 ** zoom;
+  const lon = ((x % n) + n) % n / n * 360 - 180;
+  const clampedY = Math.max(0, Math.min(n, y));
+  const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * clampedY / n)));
+  return { lat: latRad * 180 / Math.PI, lon };
+}
+
+function wrappedTileDelta(value, center, n) {
+  let delta = value - center;
+  if (delta > n / 2) delta -= n;
+  if (delta < -n / 2) delta += n;
+  return delta;
+}
+
+function gpsDistanceMeters(a, b) {
+  const r = 6371008.8;
+  const lat1 = a.lat * Math.PI / 180;
+  const lat2 = b.lat * Math.PI / 180;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLon = (b.lon - a.lon) * Math.PI / 180;
+  const sinLat = Math.sin(dLat / 2);
+  const sinLon = Math.sin(dLon / 2);
+  const h = sinLat * sinLat + Math.cos(lat1) * Math.cos(lat2) * sinLon * sinLon;
+  return 2 * r * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+}
+
+function gpsMeasureDistance(points) {
+  let total = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    total += gpsDistanceMeters(points[i - 1], points[i]);
+  }
+  return total;
+}
+
+function formatGpsDistance(meters) {
+  if (!Number.isFinite(meters) || meters <= 0) return '0 m';
+  if (meters < 1000) return `${meters.toFixed(0)} m`;
+  if (meters < 100000) return `${(meters / 1000).toFixed(2)} km`;
+  return `${(meters / 1000).toFixed(1)} km`;
+}
+
+function gpsNumericMm(value) {
+  if (value == null) return null;
+  const match = String(value).replace(',', '.').match(/-?\d+(?:\.\d+)?/);
+  if (!match) return null;
+  const mm = Number(match[0]);
+  return Number.isFinite(mm) && mm > 0 ? mm : null;
+}
+
+function gpsEquivalentFocalMm(value) {
+  if (value == null) return null;
+  const text = String(value).replace(',', '.');
+  const equivalent = text.match(/equivalent:\s*(-?\d+(?:\.\d+)?)/i);
+  if (equivalent) {
+    const mm = Number(equivalent[1]);
+    if (Number.isFinite(mm) && mm > 0) return mm;
+  }
+  return gpsNumericMm(text);
+}
+
+function formatGpsFocalMm(mm) {
+  if (!Number.isFinite(mm) || mm <= 0) return '';
+  if (mm < 100) return `${mm.toFixed(1).replace(/\.0$/, '')} mm`;
+  return `${mm.toFixed(0)} mm`;
+}
+
+function gpsExifFocalMm(exif) {
+  return gpsEquivalentFocalMm(exif?.focal_length_35mm) || gpsNumericMm(exif?.focal_length);
+}
+
+function gpsFocalLengthLabel(exif) {
+  const focal35 = typeof exif?.focal_length_35mm === 'string' ? exif.focal_length_35mm.trim() : exif?.focal_length_35mm;
+  const focal = typeof exif?.focal_length === 'string' ? exif.focal_length.trim() : exif?.focal_length;
+  const focal35mm = gpsEquivalentFocalMm(focal35);
+  if (focal35mm) return `等效焦距 ${formatGpsFocalMm(focal35mm)}`;
+  if (focal) return `焦距 ${focal}`;
+  return '';
+}
+
+function normalizeGpsAircraftLength(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.max(1, Math.min(120, n));
+}
+
+function loadGpsCustomAircraftLength() {
+  try {
+    return normalizeGpsAircraftLength(localStorage.getItem(GPS_CUSTOM_AIRCRAFT_LENGTH_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function saveGpsCustomAircraftLength(value) {
+  gpsCustomAircraftLength = normalizeGpsAircraftLength(value);
+  try {
+    if (gpsCustomAircraftLength) localStorage.setItem(GPS_CUSTOM_AIRCRAFT_LENGTH_KEY, String(gpsCustomAircraftLength));
+    else localStorage.removeItem(GPS_CUSTOM_AIRCRAFT_LENGTH_KEY);
+  } catch {}
+}
+
+function gpsAircraftFocalTargets({ includeCustom = true } = {}) {
+  const targets = [
+    { key: 'narrowbody', label: '窄体', length: GPS_NARROWBODY_LENGTH_M },
+    { key: 'widebody', label: '宽体', length: GPS_WIDEBODY_LENGTH_M },
+  ];
+  if (includeCustom && gpsCustomAircraftLength) {
+    targets.push({ key: 'custom', label: '自定义', length: gpsCustomAircraftLength });
+  }
+  return targets;
+}
+
+function gpsFocalSegmentLabels(a, b, exif = null) {
+  const distance = gpsDistanceMeters(a, b);
+  if (!Number.isFinite(distance) || distance <= 0) return [];
+  return gpsAircraftFocalTargets().map(({ label, length }) => {
+    const ffFocal = distance * GPS_FULL_FRAME_SENSOR_WIDTH_MM / length;
+    const apscFocal = ffFocal / GPS_APS_C_CROP_FACTOR;
+    return `刚好拍下${label}(机长${formatGpsTargetMeters(length)})：全幅 ${formatGpsFocalMm(ffFocal)} / APS-C ${formatGpsFocalMm(apscFocal)}`;
+  });
+}
+
+function formatGpsTargetMeters(value) {
+  if (!Number.isFinite(value)) return '';
+  return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}m`;
+}
+
+function gpsMetersPerPixel(lat, zoom, tileSize) {
+  return Math.cos(lat * Math.PI / 180) * 2 * Math.PI * 6378137 / (tileSize * 2 ** zoom);
+}
+
+function gpsDistanceForTargetWidth(focalMm, targetWidthMeters) {
+  if (!Number.isFinite(focalMm) || focalMm <= 0 || !Number.isFinite(targetWidthMeters) || targetWidthMeters <= 0) {
+    return null;
+  }
+  return focalMm * targetWidthMeters / GPS_FULL_FRAME_SENSOR_WIDTH_MM;
+}
+
+function gpsFocalGuideRings(photoPoint, centerTile, tileSize, exifFocal) {
+  if (!photoPoint || !Number.isFinite(exifFocal) || exifFocal <= 0) {
+    return { circles: '', labels: '' };
+  }
+  const metersPerPixel = gpsMetersPerPixel(photoPoint.lat, centerTile.zoom, tileSize);
+  if (!Number.isFinite(metersPerPixel) || metersPerPixel <= 0) {
+    return { circles: '', labels: '' };
+  }
+  const rings = gpsAircraftFocalTargets().map((target, idx) => {
+    const distance = gpsDistanceForTargetWidth(exifFocal, target.length);
+    const radiusPx = distance / metersPerPixel;
+    if (!Number.isFinite(radiusPx) || radiusPx <= 0) return null;
+    const angle = [-35, 35, -90][idx] ?? 0;
+    const angleRad = angle * Math.PI / 180;
+    const labelX = photoPoint.x + Math.cos(angleRad) * Math.min(radiusPx, 320);
+    const labelY = photoPoint.y + Math.sin(angleRad) * Math.min(radiusPx, 320);
+    return {
+      ...target,
+      distance,
+      radiusPx,
+      labelX,
+      labelY,
+    };
+  }).filter(Boolean);
+  return {
+    circles: rings.map(ring => `
+            <circle class="gps-focal-guide-circle gps-focal-guide-circle-${ring.key}"
+                    cx="${(1000 + photoPoint.x).toFixed(1)}"
+                    cy="${(1000 + photoPoint.y).toFixed(1)}"
+                    r="${ring.radiusPx.toFixed(1)}"></circle>`).join(''),
+    labels: rings.map(ring => `
+          <div class="gps-measure-segment gps-focal-guide-label gps-focal-ring-label gps-focal-ring-label-${ring.key}"
+               style="--measure-x:${ring.labelX.toFixed(2)}px;--measure-y:${ring.labelY.toFixed(2)}px">
+            <span>${escapeAttr(formatGpsFocalMm(exifFocal))} 参考圈</span>
+            <span>${escapeAttr(ring.label)}机长${escapeAttr(formatGpsTargetMeters(ring.length))} 最远 ${escapeAttr(formatGpsDistance(ring.distance))}</span>
+          </div>`).join(''),
+  };
+}
+
+function gpsQuadKey(x, y, zoom) {
+  let quad = '';
+  for (let i = zoom; i > 0; i -= 1) {
+    let digit = 0;
+    const mask = 1 << (i - 1);
+    if ((x & mask) !== 0) digit += 1;
+    if ((y & mask) !== 0) digit += 2;
+    quad += String(digit);
+  }
+  return quad;
+}
+
+function gpsSubdomain(source, x, y) {
+  const parts = String(source?.subdomains || '')
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean);
+  if (!parts.length) return '';
+  return parts[Math.abs(x + y) % parts.length];
+}
+
+function gpsTileUrl(source, zoom, x, y) {
+  return String(source?.template || '')
+    .replaceAll('{z}', String(zoom))
+    .replaceAll('{x}', String(x))
+    .replaceAll('{y}', String(y))
+    .replaceAll('{q}', gpsQuadKey(x, y, zoom))
+    .replaceAll('{s}', gpsSubdomain(source, x, y))
+    .replaceAll('{key}', encodeURIComponent(source?.key || ''));
+}
+
+function currentGpsExif() {
+  return state.filteredPhotos[state.viewerIndex]?.exif || null;
+}
+
+function currentGpsMapMeasure() {
+  const key = currentViewerSubpath() || '';
+  if (gpsMapMeasure.subpath !== key) {
+    gpsMapMeasure = { subpath: key, active: false, points: [], focalGuide: false };
+  }
+  if (typeof gpsMapMeasure.focalGuide !== 'boolean') gpsMapMeasure.focalGuide = false;
+  return gpsMapMeasure;
+}
+
+function getGpsMapCenter(photoLat, photoLon) {
+  const key = currentViewerSubpath() || '';
+  if (
+    gpsMapView.subpath !== key ||
+    !Number.isFinite(gpsMapView.centerLat) ||
+    !Number.isFinite(gpsMapView.centerLon)
+  ) {
+    gpsMapView = { subpath: key, centerLat: photoLat, centerLon: photoLon };
+  }
+  return { lat: gpsMapView.centerLat, lon: gpsMapView.centerLon };
+}
+
+function resetGpsMapCenter(photoLat, photoLon) {
+  gpsMapView = {
+    subpath: currentViewerSubpath() || '',
+    centerLat: photoLat,
+    centerLon: photoLon,
+  };
+}
+
+function renderGpsMeasureOverlay(centerTile, n, tileSize, exif = null, photoPoint = null) {
+  const measure = currentGpsMapMeasure();
+  if (!measure.active && measure.points.length === 0 && !measure.focalGuide) return '';
+  const rendered = measure.points.map(point => {
+    const tile = gpsTileCoord(point.lat, point.lon, centerTile.zoom);
+    return {
+      x: wrappedTileDelta(tile.x, centerTile.x, n) * tileSize,
+      y: (tile.y - centerTile.y) * tileSize,
+    };
+  });
+  const svgPoints = rendered
+    .map(point => `${(1000 + point.x).toFixed(1)},${(1000 + point.y).toFixed(1)}`)
+    .join(' ');
+  const markers = rendered.map((point, idx) => `
+          <div class="gps-measure-point"
+               style="--measure-x:${point.x.toFixed(2)}px;--measure-y:${point.y.toFixed(2)}px">${idx + 1}</div>`).join('');
+  const segmentLabels = rendered.slice(1).map((point, idx) => {
+    const prev = rendered[idx];
+    const meters = gpsDistanceMeters(measure.points[idx], measure.points[idx + 1]);
+    const focalLabels = gpsFocalSegmentLabels(measure.points[idx], measure.points[idx + 1], exif);
+    return `
+          <div class="gps-measure-segment"
+               style="--measure-x:${((prev.x + point.x) / 2).toFixed(2)}px;--measure-y:${((prev.y + point.y) / 2).toFixed(2)}px">
+            <span>A→B ${escapeAttr(formatGpsDistance(meters))}</span>
+            ${focalLabels.map(label => `<span>${escapeAttr(label)}</span>`).join('')}
+          </div>`;
+  }).join('');
+  const exifFocal = gpsExifFocalMm(exif);
+  const focalRings = measure.focalGuide ? gpsFocalGuideRings(photoPoint, centerTile, tileSize, exifFocal) : { circles: '', labels: '' };
+  const distance = formatGpsDistance(gpsMeasureDistance(measure.points));
+  const focal = gpsFocalLengthLabel(exif);
+  const focalToggle = focal
+    ? `<button type="button" class="${measure.focalGuide ? 'active' : ''}" data-gps-focal-guide title="显示/隐藏拍摄点距离参考圈">${escapeAttr(focal)}</button>`
+    : '';
+  const customLengthValue = gpsCustomAircraftLength ? String(gpsCustomAircraftLength) : '';
+  const aircraftBasis = `
+    <span class="gps-aircraft-basis">机长：窄体 ${GPS_NARROWBODY_LENGTH_M}m · 宽体 ${GPS_WIDEBODY_LENGTH_M}m · 自定义</span>
+    <label class="gps-custom-aircraft-length" title="按自定义机长测算所需焦段">
+      <input type="number" min="1" max="120" step="0.1" value="${escapeAttr(customLengthValue)}" data-gps-custom-aircraft-length>
+      <span>m</span>
+    </label>`;
+  const hint = measure.active
+    ? (measure.points.length ? '线段按拍摄距离估算焦段' : '点击地图开始测距')
+    : '测距已暂停';
+  const readout = [escapeAttr(distance), focalToggle, aircraftBasis, escapeAttr(hint)].filter(Boolean).join(' · ');
+
+  return `
+        <div class="gps-map-measure-layer">
+          <svg viewBox="0 0 2000 2000" preserveAspectRatio="none" aria-hidden="true">
+            ${focalRings.circles}
+            ${rendered.length > 1 ? `<polyline points="${escapeAttr(svgPoints)}"></polyline>` : ''}
+          </svg>
+          ${focalRings.labels}
+          ${segmentLabels}
+          ${markers}
+        </div>
+        <div class="gps-map-measure-readout">${readout}</div>`;
+}
+
+function gpsMapEventLatLon(ev, map, photoLat, photoLon) {
+  const rect = map.getBoundingClientRect();
+  const variant = map.classList.contains('gps-large-map') ? 'large' : 'mini';
+  const tileSize = variant === 'large' ? 256 : 96;
+  const zoom = clampGpsMapZoom(gpsMapSettings.zoom, activeGpsMapSource());
+  const center = getGpsMapCenter(photoLat, photoLon);
+  const centerTile = gpsTileCoord(center.lat, center.lon, zoom);
+  const dx = ev.clientX - (rect.left + rect.width / 2);
+  const dy = ev.clientY - (rect.top + rect.height / 2);
+  return gpsLatLonFromTile(
+    centerTile.x + dx / tileSize,
+    centerTile.y + dy / tileSize,
+    zoom,
+  );
+}
+
+function renderOnlineTileMap(lat, lon, latLabel, lonLabel, variant = 'mini', exif = null) {
+  const source = variant === 'mini'
+    ? GPS_BUILTIN_SOURCE_MAP.get(GPS_MAP_DEFAULTS.provider)
+    : activeGpsMapSource();
+  const zoom = clampGpsMapZoom(gpsMapSettings.zoom, source);
+  const tileSize = variant === 'large' ? 256 : 96;
+  const radius = variant === 'large' ? 2 : 1;
+  const gridSize = radius * 2 + 1;
+  const layerSize = tileSize * gridSize;
+  const center = getGpsMapCenter(lat, lon);
+  const centerTile = gpsTileCoord(center.lat, center.lon, zoom);
+  centerTile.zoom = zoom;
+  const photoTile = gpsTileCoord(lat, lon, zoom);
+  const { x, y, n } = centerTile;
+  const baseX = Math.floor(x) - radius;
+  const baseY = Math.floor(y) - radius;
+  const centerX = (x - baseX) * tileSize;
+  const centerY = (y - baseY) * tileSize;
+  const markerX = wrappedTileDelta(photoTile.x, centerTile.x, n) * tileSize;
+  const markerY = (photoTile.y - centerTile.y) * tileSize;
+  const tiles = [];
+
+  for (let row = 0; row < gridSize; row += 1) {
+    for (let col = 0; col < gridSize; col += 1) {
+      const rawX = baseX + col;
+      const tileX = ((rawX % n) + n) % n;
+      const tileY = baseY + row;
+      if (tileY < 0 || tileY >= n) continue;
+      const url = gpsTileUrl(source, zoom, tileX, tileY);
+      tiles.push(`
+          <div class="gps-map-tile"
+               style="left:${col * tileSize}px;top:${row * tileSize}px;width:${tileSize}px;height:${tileSize}px;background-image:url('${escapeAttr(url)}')"></div>`);
+    }
+  }
+
+  return `
+        <div class="gps-tile-layer" style="--center-x:${centerX.toFixed(2)}px;--center-y:${centerY.toFixed(2)}px;--tile-layer-size:${layerSize}px">
+          ${tiles.join('')}
+        </div>
+        <div class="gps-map-photo-marker"
+             title="照片位置"
+             style="--marker-x:${markerX.toFixed(2)}px;--marker-y:${markerY.toFixed(2)}px"></div>
+        ${variant === 'large' ? renderGpsMeasureOverlay(centerTile, n, tileSize, exif, { lat, lon, x: markerX, y: markerY }) : ''}
+        ${variant === 'large' ? `
+        <div class="gps-map-zoom">
+          <button type="button" data-gps-map-zoom="in" title="放大">+</button>
+          <span>${zoom}</span>
+          <button type="button" data-gps-map-zoom="out" title="缩小">-</button>
+          <button type="button" data-gps-map-reset title="回到照片位置">◎</button>
+        </div>` : ''}
+        <div class="gps-map-controls">
+          ${variant === 'large' ? GPS_BUILTIN_SOURCES.slice(0, 3).map(item => `
+            <button type="button" class="${gpsMapSettings.provider === item.id ? 'active' : ''}" data-gps-map-provider="${item.id}">${item.id === 'esri' ? '卫星' : escapeAttr(item.name.replace('Google ', 'G '))}</button>
+          `).join('') : ''}
+          ${variant === 'large' ? `<button type="button" class="${currentGpsMapMeasure().active ? 'active' : ''}" data-gps-map-measure title="测距">测距</button>` : ''}
+          ${variant === 'large' && currentGpsMapMeasure().points.length ? '<button type="button" data-gps-map-measure-clear title="清除测距">清除</button>' : ''}
+          ${variant === 'mini' ? '<button type="button" data-gps-map-large title="打开大地图">大图</button>' : ''}
+          ${variant === 'large' ? '<button type="button" data-gps-map-settings title="图源设置">图源</button>' : ''}
+        </div>
+        <div class="gps-map-readout">${latLabel} · ${lonLabel}</div>
+        <div class="gps-map-source">${escapeAttr(gpsProviderLabel(source))}</div>`;
+}
+
+function renderGpsMap(e, variant = 'mini') {
+  const data = gpsMapData(e);
+  if (!data) return '';
+  const title = `地图位置：${data.latLabel}, ${data.lonLabel}`;
+
+  return `
+      <div class="gps-mini-map${variant === 'large' ? ' gps-large-map' : ''}" role="img" aria-label="${title}" title="${title}">
+        ${renderOnlineTileMap(data.lat, data.lon, data.latLabel, data.lonLabel, variant, e)}
+      </div>`;
+}
+
 function gpsToggleTitle(type) {
   return gpsCoordModes[type] === 'decimal' ? '点击切换为度分秒' : '点击切换为十进制度';
+}
+
+function refreshGpsMapPanel() {
+  const p = state.filteredPhotos[state.viewerIndex];
+  if (p) renderInfoPanel(p);
+  refreshLargeGpsMap();
+}
+
+function refreshLargeGpsMap() {
+  const modal = $('modal-gps-map');
+  const body = $('gps-map-large-body');
+  const e = currentGpsExif();
+  if (!modal?.classList.contains('show') || !body) return;
+  if (!e || !gpsMapData(e)) {
+    body.innerHTML = '<div class="gps-map-empty">当前照片没有 GPS 信息</div>';
+    return;
+  }
+  body.innerHTML = renderGpsMap(e, 'large');
+  bindGpsMapControls(body, e);
+}
+
+function openLargeGpsMapDialog() {
+  const modal = $('modal-gps-map');
+  const body = $('gps-map-large-body');
+  const e = currentGpsExif();
+  if (!modal || !body || !e || !gpsMapData(e)) return;
+  modal.classList.add('show');
+  body.innerHTML = renderGpsMap(e, 'large');
+  bindGpsMapControls(body, e);
+}
+
+function startGpsMapDrag(ev, lat, lon) {
+  if (ev.target.closest('button,input,select')) return;
+  ev.preventDefault();
+  const zoom = clampGpsMapZoom(gpsMapSettings.zoom, activeGpsMapSource());
+  const tileSize = ev.currentTarget.classList.contains('gps-large-map') ? 256 : 96;
+  const center = getGpsMapCenter(lat, lon);
+  const tile = gpsTileCoord(center.lat, center.lon, zoom);
+  gpsMapDrag = {
+    startX: ev.clientX,
+    startY: ev.clientY,
+    startTileX: tile.x,
+    startTileY: tile.y,
+    zoom,
+    n: tile.n,
+    tileSize,
+  };
+  ev.currentTarget.classList.add('dragging');
+  document.addEventListener('pointermove', moveGpsMapDrag);
+  document.addEventListener('pointerup', endGpsMapDrag);
+  document.addEventListener('pointercancel', endGpsMapDrag);
+}
+
+function moveGpsMapDrag(ev) {
+  if (!gpsMapDrag) return;
+  ev.preventDefault();
+  const dx = ev.clientX - gpsMapDrag.startX;
+  const dy = ev.clientY - gpsMapDrag.startY;
+  const next = gpsLatLonFromTile(
+    gpsMapDrag.startTileX - dx / gpsMapDrag.tileSize,
+    gpsMapDrag.startTileY - dy / gpsMapDrag.tileSize,
+    gpsMapDrag.zoom,
+  );
+  gpsMapView = {
+    subpath: currentViewerSubpath() || '',
+    centerLat: next.lat,
+    centerLon: next.lon,
+  };
+  refreshGpsMapPanel();
+}
+
+function endGpsMapDrag() {
+  gpsMapDrag = null;
+  document.removeEventListener('pointermove', moveGpsMapDrag);
+  document.removeEventListener('pointerup', endGpsMapDrag);
+  document.removeEventListener('pointercancel', endGpsMapDrag);
+  document.querySelector('.gps-mini-map.dragging')?.classList.remove('dragging');
+}
+
+function openGpsMapSettingsDialog() {
+  bindGpsMapSettingsModal();
+  const modal = $('modal-map-settings');
+  const providerSel = $('map-provider-sel');
+  if (!modal || !providerSel) return;
+  populateGpsMapProviderSelect();
+  providerSel.value = gpsMapSourceByProvider(gpsMapSettings.provider)
+    ? gpsMapSettings.provider
+    : GPS_MAP_DEFAULTS.provider;
+  fillGpsMapSourceFields(providerSel.value);
+  modal.classList.add('show');
+}
+
+function populateGpsMapProviderSelect() {
+  const providerSel = $('map-provider-sel');
+  if (!providerSel) return;
+  const builtin = GPS_BUILTIN_SOURCES.map(source => `
+        <option value="${escapeAttr(source.id)}">${escapeAttr(source.name)}</option>`).join('');
+  const custom = gpsMapSettings.customSources.map(source => `
+        <option value="${escapeAttr(customProviderId(source.id))}">${escapeAttr(source.name)}</option>`).join('');
+  providerSel.innerHTML = `
+      <optgroup label="内置图源">${builtin}</optgroup>
+      <optgroup label="自定义图源">${custom || '<option value="" disabled>暂无自定义图源</option>'}</optgroup>`;
+}
+
+function fillGpsMapSourceFields(provider) {
+  const source = gpsMapSourceByProvider(provider);
+  const isCustom = !!customSourceId(provider);
+  const nameInput = $('map-source-name');
+  const templateInput = $('map-source-template');
+  const keyInput = $('map-source-key');
+  const subdomainsInput = $('map-source-subdomains');
+  const maxZoomInput = $('map-source-maxzoom');
+  const deleteBtn = $('btn-delete-map-source');
+  if (!source || !nameInput || !templateInput || !keyInput || !subdomainsInput || !maxZoomInput) return;
+  nameInput.value = source.name || '';
+  templateInput.value = source.template || '';
+  keyInput.value = source.key || '';
+  subdomainsInput.value = source.subdomains || '';
+  maxZoomInput.value = String(source.maxZoom || maxGpsMapZoom(source));
+  if (deleteBtn) deleteBtn.disabled = !isCustom;
+}
+
+function sourceFromMapSettingsFields(id, fallbackName = '自定义图源') {
+  return normalizeCustomSource({
+    id,
+    name: $('map-source-name')?.value.trim() || fallbackName,
+    template: $('map-source-template')?.value.trim() || '',
+    key: $('map-source-key')?.value.trim() || '',
+    subdomains: $('map-source-subdomains')?.value.trim() || '',
+    maxZoom: $('map-source-maxzoom')?.value.trim() || 20,
+  }, id);
+}
+
+function upsertCustomSource(source) {
+  const idx = gpsMapSettings.customSources.findIndex(item => item.id === source.id);
+  if (idx >= 0) gpsMapSettings.customSources[idx] = source;
+  else gpsMapSettings.customSources.push(source);
+}
+
+function newCustomSourceId() {
+  let i = gpsMapSettings.customSources.length + 1;
+  let id = `custom-${i}`;
+  const existing = new Set(gpsMapSettings.customSources.map(source => source.id));
+  while (existing.has(id)) {
+    i += 1;
+    id = `custom-${i}`;
+  }
+  return id;
+}
+
+function bindGpsMapSettingsModal() {
+  if (gpsMapSettingsModalBound) return;
+  gpsMapSettingsModalBound = true;
+  const providerSel = $('map-provider-sel');
+  const saveBtn = $('btn-save-map-settings');
+  const resetBtn = $('btn-reset-map-settings');
+  const addBtn = $('btn-add-map-source');
+  const deleteBtn = $('btn-delete-map-source');
+  if (!providerSel || !saveBtn || !resetBtn || !addBtn || !deleteBtn) return;
+
+  providerSel.addEventListener('change', () => {
+    fillGpsMapSourceFields(providerSel.value);
+  });
+
+  saveBtn.addEventListener('click', () => {
+    let provider = providerSel.value || GPS_MAP_DEFAULTS.provider;
+    const customId = customSourceId(provider);
+    if (customId) {
+      const source = sourceFromMapSettingsFields(customId);
+      if (!source) {
+        alert('请填写自定义图源 URL 模板');
+        return;
+      }
+      upsertCustomSource(source);
+      provider = customProviderId(source.id);
+    } else if (GPS_BUILTIN_SOURCE_MAP.has(provider)) {
+      gpsMapSettings.sourceKeys = {
+        ...(gpsMapSettings.sourceKeys || {}),
+        [provider]: $('map-source-key')?.value.trim() || '',
+      };
+    }
+    gpsMapSettings.provider = gpsMapSourceByProvider(provider) ? provider : GPS_MAP_DEFAULTS.provider;
+    gpsMapSettings.zoom = clampGpsMapZoom(gpsMapSettings.zoom, activeGpsMapSource());
+    saveGpsMapSettings();
+    populateGpsMapProviderSelect();
+    providerSel.value = gpsMapSettings.provider;
+    $('modal-map-settings')?.classList.remove('show');
+    refreshGpsMapPanel();
+  });
+
+  addBtn.addEventListener('click', () => {
+    const source = sourceFromMapSettingsFields(
+      newCustomSourceId(),
+      $('map-new-source-name')?.value.trim() || $('map-source-name')?.value.trim() || '自定义图源',
+    );
+    if (!source) {
+      alert('请填写自定义图源 URL 模板');
+      return;
+    }
+    const newName = $('map-new-source-name')?.value.trim();
+    if (newName) source.name = newName;
+    upsertCustomSource(source);
+    gpsMapSettings.provider = customProviderId(source.id);
+    gpsMapSettings.zoom = clampGpsMapZoom(gpsMapSettings.zoom, source);
+    saveGpsMapSettings();
+    populateGpsMapProviderSelect();
+    providerSel.value = gpsMapSettings.provider;
+    fillGpsMapSourceFields(providerSel.value);
+    refreshGpsMapPanel();
+  });
+
+  deleteBtn.addEventListener('click', () => {
+    const id = customSourceId(providerSel.value);
+    if (!id) return;
+    gpsMapSettings.customSources = gpsMapSettings.customSources.filter(source => source.id !== id);
+    if (gpsMapSettings.provider === customProviderId(id)) {
+      gpsMapSettings.provider = GPS_MAP_DEFAULTS.provider;
+      gpsMapSettings.zoom = clampGpsMapZoom(gpsMapSettings.zoom, activeGpsMapSource());
+    }
+    saveGpsMapSettings();
+    populateGpsMapProviderSelect();
+    providerSel.value = gpsMapSettings.provider;
+    fillGpsMapSourceFields(providerSel.value);
+    refreshGpsMapPanel();
+  });
+
+  resetBtn.addEventListener('click', () => {
+    gpsMapSettings = {
+      provider: GPS_MAP_DEFAULTS.provider,
+      zoom: GPS_MAP_DEFAULTS.zoom,
+      customSources: [],
+      sourceKeys: {},
+    };
+    saveGpsMapSettings();
+    populateGpsMapProviderSelect();
+    providerSel.value = gpsMapSettings.provider;
+    fillGpsMapSourceFields(providerSel.value);
+    refreshGpsMapPanel();
+  });
 }
 
 function bindGpsToggles(e) {
@@ -111,6 +957,101 @@ function bindGpsToggles(e) {
       label.title = gpsToggleTitle(type);
     });
   });
+
+  bindGpsMapControls(dom.vInfo, e);
+}
+
+function bindGpsMapControls(root, e) {
+  root.querySelectorAll('[data-gps-map-provider]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const provider = btn.dataset.gpsMapProvider;
+      if (!provider || provider === gpsMapSettings.provider) return;
+      gpsMapSettings.provider = provider;
+      gpsMapSettings.zoom = clampGpsMapZoom(gpsMapSettings.zoom, activeGpsMapSource());
+      saveGpsMapSettings();
+      refreshGpsMapPanel();
+    });
+  });
+
+  root.querySelectorAll('[data-gps-map-zoom]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const delta = btn.dataset.gpsMapZoom === 'in' ? 1 : -1;
+      gpsMapSettings.zoom = clampGpsMapZoom(gpsMapSettings.zoom + delta, activeGpsMapSource());
+      saveGpsMapSettings();
+      refreshGpsMapPanel();
+    });
+  });
+
+  root.querySelectorAll('.gps-mini-map').forEach(map => {
+    map.addEventListener('pointerdown', ev => {
+      const lat = gpsSignedValue(e.gps_lat, e.gps_lat_ref, '北纬', '南纬');
+      const lon = gpsSignedValue(e.gps_lon, e.gps_lon_ref, '东经', '西经');
+      if (lat == null || lon == null) return;
+      if (map.classList.contains('gps-large-map') && currentGpsMapMeasure().active) {
+        if (ev.target.closest('button,input,select')) return;
+        ev.preventDefault();
+        const point = gpsMapEventLatLon(ev, map, lat, lon);
+        currentGpsMapMeasure().points.push(point);
+        refreshGpsMapPanel();
+        return;
+      }
+      startGpsMapDrag(ev, lat, lon);
+    });
+    map.addEventListener('wheel', ev => {
+      ev.preventDefault();
+      gpsMapSettings.zoom = clampGpsMapZoom(
+        gpsMapSettings.zoom + (ev.deltaY < 0 ? 1 : -1),
+        activeGpsMapSource(),
+      );
+      saveGpsMapSettings();
+      refreshGpsMapPanel();
+    }, { passive: false });
+  });
+
+  root.querySelector('[data-gps-map-reset]')?.addEventListener('click', () => {
+    const lat = gpsSignedValue(e.gps_lat, e.gps_lat_ref, '北纬', '南纬');
+    const lon = gpsSignedValue(e.gps_lon, e.gps_lon_ref, '东经', '西经');
+    if (lat == null || lon == null) return;
+    resetGpsMapCenter(lat, lon);
+    refreshGpsMapPanel();
+  });
+
+  root.querySelector('[data-gps-map-measure]')?.addEventListener('click', () => {
+    const measure = currentGpsMapMeasure();
+    measure.active = !measure.active;
+    refreshGpsMapPanel();
+  });
+
+  root.querySelector('[data-gps-map-measure-clear]')?.addEventListener('click', () => {
+    const measure = currentGpsMapMeasure();
+    measure.points = [];
+    measure.active = true;
+    refreshGpsMapPanel();
+  });
+
+  root.querySelector('[data-gps-focal-guide]')?.addEventListener('click', () => {
+    const measure = currentGpsMapMeasure();
+    measure.focalGuide = !measure.focalGuide;
+    refreshGpsMapPanel();
+  });
+
+  root.querySelector('[data-gps-custom-aircraft-length]')?.addEventListener('input', ev => {
+    const value = ev.currentTarget.value;
+    clearTimeout(gpsCustomAircraftLengthTimer);
+    gpsCustomAircraftLengthTimer = setTimeout(() => {
+      saveGpsCustomAircraftLength(value);
+      refreshGpsMapPanel();
+    }, 300);
+  });
+
+  root.querySelector('[data-gps-custom-aircraft-length]')?.addEventListener('change', ev => {
+    clearTimeout(gpsCustomAircraftLengthTimer);
+    saveGpsCustomAircraftLength(ev.currentTarget.value);
+    refreshGpsMapPanel();
+  });
+
+  root.querySelector('[data-gps-map-large]')?.addEventListener('click', openLargeGpsMapDialog);
+  root.querySelector('[data-gps-map-settings]')?.addEventListener('click', openGpsMapSettingsDialog);
 }
 
 export function openViewer(idx) {
@@ -178,6 +1119,7 @@ function showCurrent() {
   dom.vImg.src = photoUrl(p);
 
   renderInfoPanel(p);
+  refreshLargeGpsMap();
   updateViewerStagedIndicator();
   if (!p.exif.lens_model) refreshLensModel(p);
 }
@@ -285,6 +1227,7 @@ function renderInfoPanel(p) {
       e.gps_lat != null || e.gps_lon != null || e.gps_altitude != null ||
       e.gps_date_stamp || e.gps_time_stamp || e.gps_version_id || e.gps_map_datum
     ) && { title: 'GPS', rows: [
+      ['__map', renderGpsMap(e)],
       ['海拔高度', formatGpsAltitude(e.gps_altitude)],
       ['日期时间戳', formatGpsDateTime(e.gps_date_stamp, e.gps_time_stamp)],
       ['GPS 版本', e.gps_version_id],
@@ -297,7 +1240,7 @@ function renderInfoPanel(p) {
   const sectionsHTML = sections.map(s => `
     <div class="sec">
       <div class="sec-title">${s.title}</div>
-      ${s.rows.filter(([, v]) => v != null).map(([k, v, gpsToggle]) => `
+      ${s.rows.filter(([, v]) => v != null && v !== '').map(([k, v, gpsToggle]) => k === '__map' ? v : `
         <div class="row">
           <span class="rk${gpsToggle ? ' gps-toggle-key' : ''}"${gpsToggle ? ` data-gps-toggle="${gpsToggle}" title="${gpsToggleTitle(gpsToggle)}"` : ''}>${k}</span>
           <span class="rv">${v}</span>

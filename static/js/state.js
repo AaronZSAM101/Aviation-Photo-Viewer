@@ -84,6 +84,8 @@ export const state = {
   stagedDeletes:    new Set(),
   stagedRenameSrcs: new Set(),
   stagedRenameMap:  new Map(),
+  stagedMoveSrcs:   new Set(),
+  stagedMoveMap:    new Map(),
   stagedExifSrcs:   new Set(),
   stagedOpTargets:  new Set(),
 

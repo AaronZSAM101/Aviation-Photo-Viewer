@@ -107,7 +107,7 @@ fn lens_model_from_exiftool(path: &std::path::Path) -> Option<String> {
 use crate::cache_paths;
 use crate::exif::extract_exif;
 use crate::exif_edit::apply_exif_override;
-use crate::models::{AppState, CachedMeta, PhotoMeta, PhotosQuery};
+use crate::models::{AppState, CachedMeta, PhotoMeta, PhotosQuery, META_CACHE_SCHEMA_VERSION};
 use crate::utils::{
     collect_photo_entries, collect_photo_folders, metadata_mtime_key, safe_subpath,
 };
@@ -209,6 +209,7 @@ pub async fn refresh_caches(
                             CachedMeta {
                                 mtime: e.mtime,
                                 size: e.size,
+                                schema_version: META_CACHE_SCHEMA_VERSION,
                                 exif,
                                 sort_key,
                             },
@@ -355,6 +356,7 @@ pub async fn list_photos(
                 Some(c)
                     if c.mtime == e.mtime
                         && c.size == e.size
+                        && c.schema_version == META_CACHE_SCHEMA_VERSION
                         && (has_display_exif(&c.exif)
                             || c.exif.image_width.is_some()
                             || c.exif.image_height.is_some()) =>
@@ -407,6 +409,7 @@ pub async fn list_photos(
                                 CachedMeta {
                                     mtime,
                                     size,
+                                    schema_version: META_CACHE_SCHEMA_VERSION,
                                     exif,
                                     sort_key,
                                 },

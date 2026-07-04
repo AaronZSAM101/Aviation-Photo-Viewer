@@ -98,6 +98,15 @@
 .exif-field{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--muted)}
 .exif-field span{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
 .exif-field input{margin-bottom:0}
+.map-settings-field{display:flex;flex-direction:column;gap:5px;margin-bottom:12px;font-size:11px;color:var(--muted)}
+.map-settings-field span{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+.map-settings-field select{width:100%;background:var(--surface2);border:1px solid var(--border2);color:var(--text);border-radius:4px;padding:6px 8px;font-size:12px}
+.map-settings-field input{margin-bottom:0}
+.map-settings-row{display:grid;grid-template-columns:1fr 1fr 90px;gap:10px}
+.map-settings-help{font-family:var(--mono);font-size:10px;color:var(--hint);margin:-4px 0 12px}
+.gps-map-modal{width:min(92vw,1120px);max-width:1120px;max-height:88vh;padding:14px}
+.gps-map-modal .modal-header{margin-bottom:10px;padding-bottom:10px}
+.gps-map-modal-body{margin-bottom:0}
 
 .card-context-menu{position:fixed;display:none;min-width:140px;background:var(--surface);border:1px solid var(--border2);border-radius:6px;box-shadow:var(--shadow-xl);z-index:1000;padding:4px}
 .card-context-menu.show{display:block}
@@ -106,4 +115,3 @@
 .card-context-item.danger{color:var(--danger)}
 .card-context-item.danger:hover{background:var(--danger-soft);color:var(--danger-hover)}
 .card-context-sep{height:1px;background:var(--border2);margin:4px 6px}
-

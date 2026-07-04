@@ -57,18 +57,34 @@ export function renameBadgeTitle(sp) {
   return `${sp} → ${dst}`;
 }
 
+export function moveBadgeLabel(sp) {
+  const dst = state.stagedMoveMap.get(sp);
+  if (!dst) return '待移动';
+  const dstFolder = splitSubpath(dst).folder || '(根目录)';
+  return `移至 ${dstFolder}`;
+}
+
+export function moveBadgeTitle(sp) {
+  const dst = state.stagedMoveMap.get(sp);
+  if (!dst) return sp;
+  return `${sp} → ${dst}`;
+}
+
 export function updateCardStagedIndicators() {
   document.querySelectorAll('.card[data-sp]').forEach(card => {
     const sp        = card.dataset.sp;
     const isDeleted = state.stagedDeletes.has(sp);
     const isRenamed = state.stagedRenameSrcs.has(sp);
+    const isMoved   = state.stagedMoveSrcs.has(sp);
     const hasExifOp = state.stagedExifSrcs.has(sp);
     card.classList.toggle('staged-delete', isDeleted);
     card.classList.toggle('staged-rename', isRenamed);
+    card.classList.toggle('staged-move', isMoved);
     card.classList.toggle('staged-exif', hasExifOp);
     const thumb = card.querySelector('.thumb');
     let deleteBadge = thumb && thumb.querySelector('.badge.staged');
     let renameBadge = thumb && thumb.querySelector('.badge.rename');
+    let moveBadge = thumb && thumb.querySelector('.badge.move');
     let exifBadge = thumb && thumb.querySelector('.badge.exif');
     if (isDeleted && !deleteBadge && thumb) {
       const b = document.createElement('span');
@@ -89,6 +105,18 @@ export function updateCardStagedIndicators() {
     } else if (isRenamed && renameBadge) {
       renameBadge.textContent = renameBadgeLabel(sp);
       renameBadge.title = renameBadgeTitle(sp);
+    }
+    if (isMoved && !moveBadge && thumb) {
+      const b = document.createElement('span');
+      b.className = 'badge move';
+      b.textContent = moveBadgeLabel(sp);
+      b.title = moveBadgeTitle(sp);
+      thumb.appendChild(b);
+    } else if (!isMoved && moveBadge) {
+      moveBadge.remove();
+    } else if (isMoved && moveBadge) {
+      moveBadge.textContent = moveBadgeLabel(sp);
+      moveBadge.title = moveBadgeTitle(sp);
     }
     if (hasExifOp && !exifBadge && thumb) {
       const b = document.createElement('span');
@@ -361,8 +389,10 @@ function makeCard(p, idx, photosIdx) {
   const sp         = subpath(p);
   const isStaged   = state.stagedDeletes.has(sp);
   const isRenamed  = state.stagedRenameSrcs.has(sp);
+  const isMoved    = state.stagedMoveSrcs.has(sp);
   const hasExifOp  = state.stagedExifSrcs.has(sp);
   const renameText = isRenamed ? renameBadgeLabel(sp) : '';
+  const moveText   = isMoved ? moveBadgeLabel(sp) : '';
   const isSelected = state.selectedSubpaths.has(sp);
 
   const card = document.createElement('div');
@@ -370,6 +400,7 @@ function makeCard(p, idx, photosIdx) {
     'card' +
     (isStaged   ? ' staged-delete' : '') +
     (isRenamed  ? ' staged-rename' : '') +
+    (isMoved    ? ' staged-move'   : '') +
     (hasExifOp  ? ' staged-exif'   : '') +
     (isSelected ? ' selected'      : '');
   card.dataset.sp = sp;
@@ -384,6 +415,7 @@ function makeCard(p, idx, photosIdx) {
       ${!hasExif ? '<span class="badge no-exif">NO EXIF</span>' : ''}
       ${isStaged  ? '<span class="badge staged">待删除</span>' : ''}
       ${isRenamed ? `<span class="badge rename" title="${renameBadgeTitle(sp)}">${renameText}</span>` : ''}
+      ${isMoved   ? `<span class="badge move" title="${moveBadgeTitle(sp)}">${moveText}</span>` : ''}
       ${hasExifOp ? '<span class="badge exif" title="待写入 EXIF">待EXIF</span>' : ''}
       <span class="badge num">#${idx}</span>
     </div>

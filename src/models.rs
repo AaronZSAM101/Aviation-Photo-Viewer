@@ -42,9 +42,13 @@ pub struct ExifData {
 pub struct CachedMeta {
     pub mtime: u64,
     pub size: u64,
+    #[serde(default)]
+    pub schema_version: u32,
     pub exif: ExifData,
     pub sort_key: i64,
 }
+
+pub const META_CACHE_SCHEMA_VERSION: u32 = 2;
 
 /// 文件系统扫描到的照片条目
 #[derive(Clone)]

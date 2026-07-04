@@ -130,16 +130,22 @@ export async function fetchStagedOps() {
     const list = await res.json();
     state.stagedDeletes    = new Set(list.filter(o => o.kind === 'delete').map(o => o.src));
     state.stagedRenameSrcs = new Set(list.filter(o => o.kind === 'rename').map(o => o.src));
+    state.stagedMoveSrcs   = new Set(list.filter(o => o.kind === 'move').map(o => o.src));
     state.stagedExifSrcs   = new Set(list.filter(o => o.kind === 'exif').map(o => o.src));
     state.stagedRenameMap  = new Map(
       list.filter(o => o.kind === 'rename' && o.dst).map(o => [o.src, o.dst])
+    );
+    state.stagedMoveMap    = new Map(
+      list.filter(o => o.kind === 'move' && o.dst).map(o => [o.src, o.dst])
     );
     state.stagedOpTargets  = new Set(list.filter(o => o.dst).map(o => o.dst));
   } catch (e) {
     state.stagedDeletes    = new Set();
     state.stagedRenameSrcs = new Set();
+    state.stagedMoveSrcs   = new Set();
     state.stagedExifSrcs   = new Set();
     state.stagedRenameMap  = new Map();
+    state.stagedMoveMap    = new Map();
     state.stagedOpTargets  = new Set();
   }
 }
@@ -216,7 +222,10 @@ export async function clearAllStaged() {
   await fetch('/api/stage/clear', { method: 'POST' });
   state.stagedDeletes.clear();
   state.stagedRenameSrcs.clear();
+  state.stagedMoveSrcs.clear();
   state.stagedExifSrcs.clear();
+  state.stagedRenameMap.clear();
+  state.stagedMoveMap.clear();
   state.stagedOpTargets.clear();
   clearSelection();
   updateCardStagedIndicators();
