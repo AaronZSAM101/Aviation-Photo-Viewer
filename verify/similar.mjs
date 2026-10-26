@@ -53,18 +53,35 @@ const cards = await poll(
 );
 console.log('cards rendered:', cards);
 
-// Open the compare modal through the header button (real mouse click, no overlays yet).
-const headerBtn = await page.evaluate(() => {
-  const b = [...document.querySelectorAll('button')].find(
-    (x) => x.textContent.replace(/\s+/g, '').includes('相似对比'),
-  );
-  if (!b) return null;
-  const r = b.getBoundingClientRect();
-  return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
-});
-if (!headerBtn) throw new Error('相似对比 button missing');
-await page.mouse.click(headerBtn.x, headerBtn.y);
-const opened = await modalText();
+// #loading 是整屏遮罩，列表到达后 300ms 才隐藏。不等它退下去就点，点的是遮罩，
+// 模态框根本不会开 —— 套件里跑到第 5 个、机器正忙时就是这么偶发的。
+await poll(
+  () =>
+    page.evaluate(() => {
+      const l = document.getElementById('loading');
+      return !l || !l.classList.contains('show');
+    }),
+  15000,
+);
+
+const clickCompare = () =>
+  page.evaluate(() => {
+    const b = [...document.querySelectorAll('button')].find(
+      (x) => x.textContent.replace(/\s+/g, '').includes('相似对比'),
+    );
+    if (!b) return false;
+    b.click();
+    return true;
+  });
+
+if (!(await clickCompare())) throw new Error('相似对比 button missing');
+let opened = await modalText();
+if (!opened) {
+  // 机器很忙时监听器可能还没挂上，再点一次
+  await sleep(2000);
+  await clickCompare();
+  opened = await modalText();
+}
 console.log('compare modal opened:', !!opened);
 
 const clickedScan = await clickInModal('扫描当前目录');
