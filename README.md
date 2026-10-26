@@ -652,7 +652,7 @@ cd frontend && npm test        # vitest，无浏览器依赖
 ./verify/suite.sh localhost/photo-viewer:latest
 ```
 
-它会起两个临时实例（只读挂真实图库 + 可写挂临时卷），跑 parity / batch4-ui / conflict-ui / mobile-ui 四套断言，最后打印通过或失败的套件。细节和已知坑见 [verify/README.md](verify/README.md)。
+它会起三个临时实例（只读挂真实图库 + 可写挂临时卷 + 一份从真实库只读抽出来的 18 张样本库），跑 parity / batch4-ui / conflict-ui / mobile-ui / similar 五套断言，最后打印通过或失败的套件。细节和已知坑见 [verify/README.md](verify/README.md)。
 
 镜像装到生产之后再冒烟一次：
 

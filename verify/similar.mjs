@@ -71,15 +71,20 @@ const clickedScan = await clickInModal('扫描当前目录');
 console.log('scan clicked:', clickedScan);
 
 const done = await poll(async () => {
+  // 进度行（"已处理 … 已找到 0 组"）里也有"找到 N 组"，整块 modal 文本里正则蒙会把
+  // 扫描中当成扫完。按元素取：结果行是 .compare-scan-head 且以"扫描 N 张"开头。
   const t = await page.evaluate(() => {
     const m = [...document.querySelectorAll('.ant-modal')].find((x) => x.offsetParent !== null);
-    return m ? m.textContent.replace(/\s+/g, ' ').trim() : null;
+    if (!m) return null;
+    const head = (m.querySelector('.compare-scan-head')?.textContent || '').trim();
+    const status = (m.querySelector('.compare-status')?.textContent || '').trim();
+    const text = `${head} ${status}`.replace(/\s+/g, ' ').trim();
+    return /^(扫描 \d+ 张|没有找到符合阈值|扫描失败)/.test(text) ? text : null;
   });
-  if (!t) return null;
-  return /找到\s*\d+\s*组|没有找到符合阈值|扫描失败/.test(t) ? t : null;
+  return t;
 }, 60000);
 
-const summary = done ? norm(done).slice(0, 260) : null;
+const summary = done ? String(done).slice(0, 260) : null;
 await page.screenshot({ path: `${OUT}/16-similar-scan.png` }).catch(() => {});
 
 // 样本库里一定有 4 对一模一样的副本，所以"找到 N 组"必须出现且 N >= 4；
