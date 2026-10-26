@@ -225,7 +225,9 @@ macOS 上前两条不够用，因为 `podman machine` 本身不会随登录启�
 bash ops/macos/boot.sh          # 先手动跑一次，确认能起来
 ```
 
-脚本是幂等的：machine 没跑就启动、顺手打开 `podman-restart.service`、等 Synology Drive 把图库挂上、已经有健康服务就什么都不做。要开机自动执行，把它注册成 LaunchAgent：
+脚本是幂等的：machine 没跑就启动、顺手打开 `podman-restart.service`、等 Synology Drive 把图库挂上、已经有健康服务就什么都不做。
+
+**当前部署选择不注册开机任务**：相册不需要 24 小时在线，机器重启后手动跑一次上面那条 `bash ops/macos/boot.sh` 就够了 —— 它把 `podman machine start`、VM 里的重启开关、等图库挂载、`play kube` 四步合成一步，不用记顺序。要真的开机自启，再往下注册 LaunchAgent：
 
 ```bash
 sed -e "s|__REPO__|$(pwd)|g" -e "s|__HOME__|$HOME|g" \
@@ -480,6 +482,10 @@ https://你的NAS地址:3443
 ops/backup-state.sh migrate /fast-cache   # 先搬，默认不带 93MB 缩略图
 ops/backup-state.sh backup                # 定期备份到 ~/photo-viewer-backups，保留最近 10 份
 ```
+
+`migrate` 传的那个目录会同时当成宿主路径和容器内路径 —— Podman 虚拟机看不见 macOS 的任意路径，所以要么挑一条两边写法完全一致的路径（`photo-viewer-pod.yaml` 里 `cache-volume` 那段注释就是这个写法），要么就别搬。不加 `--with-thumbs` 的话，93 MB 缩略图由新位置自己重建，第一次浏览会边看边生成。
+
+这一步是可选项：缓存留在库里只是脏一点、跟着云盘多同步 96 MB，功能上没有任何问题。
 
 `exif_overrides.json` 是唯一不可再生的数据 —— 手动补的拍摄时间、机型都在里面，丢了只能重新填，务必定期 `backup`。回收站 `.trash` 属于照片库本身，不在缓存里，也别跟着删。
 

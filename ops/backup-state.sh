@@ -11,6 +11,8 @@
 #
 # migrate 的可选参数：<外部缓存目录> 后面可以跟 --with-thumbs（默认不搬 93MB 缩略图，
 # 让新库自己重建）和 --force（目标目录非空也继续）。
+# <外部缓存目录> 会同时当成宿主路径和容器内路径：容器看不见 macOS 的任意路径，
+# 只有把它原样挂进容器（photo-viewer-pod.yaml 里 cache-volume 那段注释）搬过去才有用。
 set -uo pipefail
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -120,12 +122,17 @@ migrate() {
   [ -f "$dest_dir/meta.json" ] || die "搬完还是看不到 meta.json，检查一下权限"
 
   log
-  log "下一步：给容器加环境变量 PHOTO_VIEWER_CACHE_DIR=$target，再 podman play kube --replace photo-viewer-pod.yaml"
-  log "确认新目录好用之后再删库里的 $src —— 回收站 .trash 留在库里，别一起删。"
+  log "下一步 1/2：把这条路径同时给容器用（photo-viewer-pod.yaml 里有现成的注释块，解开即可）："
+  log "        env:          - name: PHOTO_VIEWER_CACHE_DIR / value: $target"
+  log "        volumeMounts: - name: cache-volume / mountPath: $target"
+  log "        volumes:      - name: cache-volume / hostPath.path: $target"
+  log "      三条路径必须一模一样，否则容器读不到你刚拷过去的文件。"
+  log "下一步 2/2：podman play kube --replace photo-viewer-pod.yaml"
+  log "确认启动横幅里的 State/缓存 → 指向新目录之后，再删库里的 $src —— 回收站 .trash 留在库里，别一起删。"
 }
 
 case ${1:-} in
   backup) shift; backup "$@" ;;
   migrate) shift; migrate "$@" ;;
-  *) sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
+  *) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 2 ;;
 esac
