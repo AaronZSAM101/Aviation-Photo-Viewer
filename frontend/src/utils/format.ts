@@ -1,0 +1,52 @@
+import type { ExifData } from '../types';
+
+export function fmtSize(b: number): string {
+  if (b < 1024) return `${b} B`;
+  if (b < 1048576) return `${(b / 1024).toFixed(1)} KB`;
+  return `${(b / 1048576).toFixed(2)} MB`;
+}
+
+export function fmtMegapixels(w?: number | null, h?: number | null): string | null {
+  if (!w || !h) return null;
+  const mp = (w * h) / 1_000_000;
+  if (mp >= 10) return `${mp.toFixed(1)} MP`;
+  if (mp >= 1) return `${mp.toFixed(2)} MP`;
+  return `${mp.toFixed(3)} MP`;
+}
+
+export function fmtDate(s?: string | null): string {
+  if (!s) return '—';
+  return s
+    .replace(/^"|"$/g, '')
+    .replace(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}).*$/, '$1-$2-$3 $4:$5');
+}
+
+export function hasAnyExif(e?: ExifData | null): boolean {
+  if (!e) return false;
+  return !!(
+    e.date_taken ||
+    e.make ||
+    e.model ||
+    e.lens_model ||
+    e.software ||
+    e.iso ||
+    e.exposure_time ||
+    e.f_number ||
+    e.focal_length ||
+    e.focal_length_35mm ||
+    e.gps_altitude ||
+    e.gps_altitude_ref ||
+    e.gps_lat ||
+    e.gps_lat_ref ||
+    e.gps_lon ||
+    e.gps_lon_ref ||
+    e.gps_date_stamp ||
+    e.gps_time_stamp ||
+    e.gps_version_id ||
+    e.gps_map_datum ||
+    e.flash ||
+    e.white_balance ||
+    e.metering_mode ||
+    e.exposure_bias
+  );
+}

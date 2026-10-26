@@ -94,3 +94,11 @@ deploy/
 .photo_viewer_meta.json
 .photo_viewer_hash_cache.json
 .photo_viewer_exif_overrides.json
+
+# Frontend (Node / Vite)
+node_modules/
+frontend/dist/
+*.tsbuildinfo
+
+# Local verification scratch (headless browser runs, screenshots)
+.verify/

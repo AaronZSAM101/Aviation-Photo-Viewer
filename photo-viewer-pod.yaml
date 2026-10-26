@@ -26,4 +26,4 @@ spec:
   volumes:
     - name: photos-volume
       hostPath:
-        path: /Users/aaronliu/Library/CloudStorage/SynologyDrive-MBA-Aaron/Photos/Aviation
+        path: /Users/aaronliu/Library/CloudStorage/SynologyDrive-Photos/Photos/Aviation

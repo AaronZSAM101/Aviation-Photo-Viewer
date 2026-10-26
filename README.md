@@ -2,7 +2,7 @@
 
 Aviation-Photo-Viewer 是一个轻量的照片浏览和管理工具，并且对于航空摄影师提供了一些客制化的服务。
 
-本项目将后端、前端和静态资源打包成一个程序或一个容器，适合在本机、NAS、家庭服务器上浏览大量照片。
+本项目前后端分离：`backend/` 是 Rust + actix-web 服务，`frontend/` 是 TypeScript + React + antd 单页应用。构建镜像时前端会打包成静态文件并和后端一起放进一个容器，适合在本机、NAS、家庭服务器上浏览大量照片。
 
 ## 目录
 
@@ -83,8 +83,10 @@ Aviation-Photo-Viewer 是一个轻量的照片浏览和管理工具，并且对�
 
 适合已经拿到二进制文件，或者自己会 `cargo build` 的用户。
 
+二进制本身不带前端资源，需要指向已经构建好的 `frontend/dist`：
+
 ```bash
-PHOTOS_DIR=/你的照片目录 PORT=3000 ./photo-viewer
+PHOTOS_DIR=/你的照片目录 PORT=3000 FRONTEND_DIR=./frontend/dist ./photo-viewer
 ```
 
 然后打开：
@@ -412,11 +414,13 @@ https://你的NAS地址:3443
 | 变量 | 默认值 | 说明 |
 ---|---|---
 | `PHOTOS_DIR` | `/photos` | 容器或程序内部看到的照片目录 |
+| `FRONTEND_DIR` | 未设置时依次探测 `frontend/dist`、`../frontend/dist`、`/app/frontend/dist` | 前端构建产物目录，后端从这里读取 `index.html` 和 `/assets/*` |
 | `PORT` | 本地程序默认 `3000`，镜像默认 `80` | 服务监听端口 |
 | `HOST` | 本地程序默认 `127.0.0.1`，镜像默认 `0.0.0.0` | 服务监听地址 |
 | `READ_ONLY` | `false` | photo-viewer 只读模式，设为 `true` 后禁用写操作 |
 | `PHASH_WARMUP` | `false` | 打开照片列表后是否自动后台预热相似照片缓存；默认关闭，避免只是浏览时持续扫原图 |
 | `SIMILAR_SCAN_WORKERS` | `4` | 相似照片扫描的后端并发数；NAS 上可调成 `2`，本地机器可用默认值 |
+| `ALLOW_RUNTIME_DIR_CHANGE` | `false` | 是否允许通过管理接口在运行时切换照片目录 |
 | `HTTPS_CERT_PATH` | 未设置 | HTTPS 证书 PEM 路径 |
 | `HTTPS_KEY_PATH` | 未设置 | HTTPS 私钥 PEM 路径 |
 
@@ -454,7 +458,7 @@ HTTPS_CERT_PATH=./localhost-cert.pem \
 HTTPS_KEY_PATH=./localhost-key.pem \
 PHOTOS_DIR=/path/to/photos \
 PORT=3443 \
-cargo run --release
+cargo run --release --manifest-path backend/Cargo.toml
 ```
 
 打开：
@@ -505,11 +509,17 @@ JPG · PNG · WebP · TIFF
 | `GET /` | 前端页面 |
 | `GET /view/:path` | 可刷新查看器路由 |
 | `GET /api/config` | 前端配置 |
-| `GET /api/photos?sort=` | 照片列表 JSON |
+| `GET /api/photos?sort=` | 照片列表 JSON；响应头 `x-scan-errors` / `x-scan-truncated` 报告部分扫描失败与截断 |
+| `GET /api/scan/status` | 最近一次目录扫描的错误、截断与计数 |
+| `GET /api/folders` | 照片库内的目录列表 |
+| `POST /api/cache/refresh` | 清空缩略图 / 预览图内存缓存 |
 | `GET /photos/:path` | 原图 |
 | `GET /thumb/:path` | 缩略图 |
 | `GET /preview/:path` | 预览图 |
 | `POST /api/stage` | 暂存文件操作 |
+| `GET /api/stage/list` | 待执行操作列表 |
+| `POST /api/stage/remove/{id}` | 撤销一个待执行操作 |
+| `POST /api/stage/clear` | 清空待执行操作 |
 | `POST /api/stage/apply` | 应用暂存操作 |
 | `GET /api/trash/list` | 回收站列表 |
 | `GET /api/hash/:path` | 计算 SHA256 和感知哈希 |
@@ -517,7 +527,10 @@ JPG · PNG · WebP · TIFF
 | `GET /api/similar?threshold=&limit=&max_photos=` | 扫描当前照片目录，查找相似照片 |
 | `POST /api/similar/jobs?threshold=&limit=&max_photos=` | 创建后台相似照片扫描任务 |
 | `GET /api/similar/jobs/:id` | 查看后台扫描进度和结果 |
+| `GET /api/exif/lens/:path` | 读取照片的镜头型号 |
 | `POST /api/exif/update` | 保存手动 EXIF 覆盖值 |
+| `GET /api/admin/allow_set_dir` | 是否允许运行时切换照片目录 |
+| `POST /api/admin/set_photos_dir` | 运行时切换照片目录 |
 
 `sort` 可选值：
 
@@ -529,17 +542,31 @@ date-asc / date-desc / name-asc / name-desc / size-desc
 
 ### 本地开发
 
+后端：
+
 ```bash
+cd backend
 cargo check
-cargo build
-PHOTOS_DIR=/path/to/photos PORT=3000 cargo run
+PHOTOS_DIR=/path/to/photos PORT=3000 FRONTEND_DIR=../frontend/dist cargo run
 ```
+
+前端：
+
+```bash
+cd frontend
+npm ci
+npm run dev        # Vite 开发服务器，接口按 vite.config.ts 代理到后端
+npm run build      # tsc -b 类型检查 + Vite 产物输出到 frontend/dist
+```
+
+前后端分离运行时需要两份进程：后端提供 `/api`、`/photos`、`/thumb`、`/preview`，前端页面从 `frontend/dist`（或 Vite dev server）加载。
 
 构建 release：
 
 ```bash
-cargo build --release
-PHOTOS_DIR=/path/to/photos PORT=3000 ./target/release/photo-viewer
+cd frontend && npm run build
+cd ../backend && cargo build --release
+PHOTOS_DIR=/path/to/photos PORT=3000 FRONTEND_DIR=../frontend/dist ./target/release/photo-viewer
 ```
 
 ### 构建镜像
@@ -556,16 +583,18 @@ docker build -t photo-viewer .
 
 ### Containerfile 说明
 
-镜像是多阶段构建：
+镜像是三阶段构建：
 
-- builder 阶段基于 Rust 镜像编译程序。
-- runtime 阶段基于 `debian:bookworm-slim`，只放运行所需文件。
-- 静态前端资源会编译进二进制，运行时不需要单独挂载 `static/`。
+- frontend 阶段基于 `node:22-alpine`，用 `npm ci` 安装依赖并执行 `npm run build` 产出 `frontend/dist`。
+- builder 阶段基于 Rust 镜像编译后端二进制。
+- runtime 阶段基于 `debian:trixie-slim`，只放运行所需文件：后端二进制 + `frontend/dist`，由 `FRONTEND_DIR=/app/frontend/dist` 指向。
+- 前端资源不落进二进制，运行时由 actix-web 直接从磁盘读取，并对未知路径回退到 `index.html`（SPA 路由）。
 
 镜像默认值：
 
 ```text
 PHOTOS_DIR=/photos
+FRONTEND_DIR=/app/frontend/dist
 PORT=80
 HOST=0.0.0.0
 READ_ONLY=false
@@ -576,43 +605,59 @@ READ_ONLY=false
 ```text
 photo-viewer/
 ├── Containerfile
-├── Cargo.toml
-├── Cargo.lock
 ├── photo-viewer-pod.yaml
-├── src/
-│   ├── main.rs
-│   ├── lib.rs
-│   ├── models.rs
-│   ├── handlers.rs
-│   ├── file_ops.rs
-│   ├── exif.rs
-│   ├── exif_edit.rs
-│   ├── hash.rs
-│   └── utils.rs
-└── static/
+├── backend/
+│   ├── Cargo.toml
+│   ├── Cargo.lock
+│   ├── build.rs
+│   └── src/
+│       ├── main.rs
+│       ├── lib.rs
+│       ├── models.rs
+│       ├── paths.rs
+│       ├── handlers.rs
+│       ├── file_ops.rs
+│       ├── exif.rs
+│       ├── exif_edit.rs
+│       ├── hash.rs
+│       └── utils.rs
+└── frontend/
+    ├── package.json
+    ├── vite.config.ts
     ├── index.html
-    ├── css/
-    └── js/
+    └── src/
+        ├── api/           # axios 实例与各接口封装
+        ├── components/    # 头部、卡片、查看器、模态框
+        ├── pages/         # GalleryPage
+        ├── store/         # Redux Toolkit slice
+        ├── styles/        # 主题变量与布局
+        ├── types/         # 与后端 JSON 对应的类型
+        ├── config/        # 前端常量
+        └── utils/         # 分组、格式化、图片加载
 ```
+
+重构前的原生 JS 前端 `static/` 已删除，前端只保留 `frontend/`。
 
 ### 技术栈
 
 后端：
 
 - Rust
-- Axum
+- actix-web（rustls 支持 HTTPS）
 - Tokio
 - Rayon
-- rust-embed
 - image
 - kamadak-exif
 
 前端：
 
-- 原生 HTML / CSS / JavaScript
-- ES Modules
-- 虚拟滚动
-- 智能图片加载队列
+- TypeScript + React
+- antd 组件库
+- Vite
+- Redux Toolkit + react-redux
+- axios
+- Intersection Observer 懒加载缩略图
+- 并发受限的图片加载队列
 
 ### 性能设计
 
@@ -627,4 +672,4 @@ photo-viewer/
 - 缩略图和预览图会缓存在内存中。
 - 前端使用 Intersection Observer，只加载接近视口的图片。
 - 图片加载队列限制并发，避免浏览器一次性加载太多图片。
-- 静态资源通过 `rust-embed` 编译进二进制。
+- 前端静态资源由 actix-web 从 `FRONTEND_DIR` 直接读取，不编进二进制。

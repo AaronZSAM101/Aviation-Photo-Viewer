@@ -1,0 +1,9 @@
+@import url('./styles/base.css');
+@import url('./styles/gallery.css');
+@import url('./styles/viewer.css');
+@import url('./styles/compare.css');
+@import url('./styles/responsive.css');
+
+#root {
+  min-height: 100%;
+}
