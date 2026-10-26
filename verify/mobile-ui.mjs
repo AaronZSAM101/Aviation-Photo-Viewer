@@ -313,7 +313,6 @@ const missing = ['批量移动', '批量删除', '分批列表', '回收站', '�
 );
 if (!/折叠全部|展开全部/.test(menuText)) missing.push('折叠/展开全部');
 if (!/\d{4}-\d{2}-\d{2}|版本未知/.test(menuText)) missing.push('版本号');
-if (!menuText.includes('WIP')) missing.push('WIP 标记');
 check('more menu exposes every management control', missing.length === 0, JSON.stringify({ missing, labels: menuItems.labels }));
 check('more menu is fully on screen', menuItems.clipped === 0 && menuItems.panel !== null, JSON.stringify(menuItems));
 await shot('01b-more-menu');

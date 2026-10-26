@@ -82,8 +82,14 @@ const done = await poll(async () => {
 const summary = done ? norm(done).slice(0, 260) : null;
 await page.screenshot({ path: `${OUT}/16-similar-scan.png` }).catch(() => {});
 
+// 样本库里一定有 4 对一模一样的副本，所以"找到 N 组"必须出现且 N >= 4；
+// 只断言"有结果"会让扫描静默返回空也算通过。
+const groups = summary ? Number((summary.match(/找到\s*(\d+)\s*组/) || [])[1] ?? -1) : -1;
+const ok = groups >= 4 && errors.length === 0;
 console.log('scan result text:', summary);
 console.log('console/page errors:', errors.length ? errors.slice(0, 5) : 'none');
-console.log(/找到\s*\d+\s*组|没有找到符合阈值/.test(summary || '') ? 'SIMILAR_SCAN_OK' : 'SIMILAR_SCAN_FAIL');
+console.log(`${ok ? 'PASS' : 'FAIL'} similar scan surfaces seeded duplicates [${groups} 组]`);
+console.log('SIMILAR_SCAN_' + (ok ? 'OK' : 'FAIL'));
+if (!ok) process.exitCode = 1;
 
 await browser.close();

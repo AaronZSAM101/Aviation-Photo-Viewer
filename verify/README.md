@@ -14,10 +14,11 @@
 LIB=/path/to/Aviation ./verify/suite.sh           # 换真实图库路径
 ```
 
-流程：单元测试 → 起两个临时实例 → 播种测试照片 → 跑核心套件（每个会改库的套件前重新播种）→ 清理容器和临时卷。
+流程：单元测试 → 起三个临时实例 → 播种测试照片 → 跑核心套件（每个会改库的套件前重新播种）→ 清理容器和临时卷。
 
 - `pv-verify-ro`（宿主 3901）：真实图库以 **:ro** 挂载，`READ_ONLY=true`。只用于浏览/渲染类断言。
 - `pv-verify-rw`（宿主 3902）：`verify/.scratch/photos` 临时卷，可写。所有删除、移动、覆盖都落在这里，跑完即删。
+- `pv-verify-sim`（宿主 3903）：`verify/.scratch/probe/photos` 样本卷，18 张小原图（`probe-manifest.txt` 从真实库挑的，套件里只读抽取），相似对比用它，避免在 2939 张的真实库上等一分钟。
 - 浏览器容器：`docker.io/zenika/alpine-chrome:with-node`，`--entrypoint node`，靠 `--network podman` 直接访问上面两个实例的 IP。
 - 每个套件的完整原始输出落在 `verify/out/<tag>.log`，屏幕上只留 `PASS` / `FAIL` / 汇总行；任一套件超出允许的 FAIL 数就以退出码 1 结束。
 
@@ -52,7 +53,7 @@ podman rm -f pv-verify-manual   # parity 跑完不关浏览器，必须手动收
 
 ## 套件清单
 
-核心四件（`suite.sh` 覆盖）：
+核心五件（`suite.sh` 覆盖）：
 
 | 脚本 | 覆盖范围 | 预期 |
 | --- | --- | --- |
@@ -60,6 +61,7 @@ podman rm -f pv-verify-manual   # parity 跑完不关浏览器，必须手动收
 | `batch4-ui.mjs` | 顶栏整理、搜索去空白、查看器身份与按键作用域、只读刷新、扫描告警 | 16/16 |
 | `conflict-ui.mjs` | 分批应用遇到覆盖冲突时，界面指出源与目标，操作仍留在队列里 | 8/8 |
 | `mobile-ui.mjs` | 393×852 手机视口的溢出/遮挡量化 + 截图，只做浏览类操作 | 可写 30/30；只读 27/30（3 项是管理入口，按设计隐藏） |
+| `similar.mjs` | 相似对比：3903 上独立样本实例（`probe-manifest.txt` 的 14 张真实原图 + 4 个副本），断言模态框报出 ≥4 组 | 1/1 |
 
 后端写路径的定向脚本（要自己起可写实例，`HOST_IP`/`PHOTOS_ROOT`/`WRITE_IP` 指过去）：
 | 脚本 | 覆盖范围 |
@@ -85,13 +87,12 @@ podman rm -f pv-verify-manual   # parity 跑完不关浏览器，必须手动收
 | `perf-render.mjs` | 手机视口 + CPU 节流下的首屏阻塞、滚动掉帧、CLS | `BASE`、`THROTTLE`、`EXPECT_CARDS`、`BLOCK_THUMBS`、`SCROLL_STEPS` |
 | `perf-click.mjs` | 勾选/翻页时整页重渲染代价（含 CDP 输入开销） | `BASE`、`THROTTLE` |
 | `perf-click2.mjs` | 页面内测量，去掉 CDP 开销，看 React 提交与绘制耗时 | `BASE`、`THROTTLE` |
-| `similar.mjs` | 相似照片对比（`PHASH_WARMUP` 相关，当前属 WIP） | `BASE` |
 | `summarize.py` | 把 `perf-render` 的 JSON 压成一行，便于 A/B 对比 | 标准输入 |
 
 ## 这些脚本之外还有两层更快的检查
 
 ```bash
-cd backend && cargo test      # 后端纯逻辑，28 条
+cd backend && cargo test      # 后端纯逻辑，33 条
 cd frontend && npm test       # 前端 utils：分组/路径/分批状态/格式化，43 条
 ```
 
@@ -104,6 +105,8 @@ GitHub Actions 的 `.github/workflows/test.yml` 只跑这两层加一次 `npm ru
 - **`parity.mjs` 等的是 2939 这个具体数字。** 前端按帧分批挂载，脚本会等卡片补齐再断言，所以 `LIB` 必须指向真实的 Aviation 库；换库要改这个期望值（或用 `BLOCK_THUMBS=1` 的性能探针，它不校验总数）。
 - **`parity.mjs` 会开两个浏览器**（只读实例一个、可写实例一个）。脚本结束时都会关掉，但如果中途超时或被 Ctrl-C，容器会挂着，用 `podman rm -f pv-verify-parity` 收掉。
 - **macOS 上 `/tmp` 没有共享进 Podman 虚拟机。** 临时卷必须放在仓库目录内（`verify/.scratch`），否则容器里 `statfs` 直接报 no such file or directory。
+- **`probe-manifest.txt` 挑的是真实库里 14 张小原图**，如果这些文件被改名或删掉，`seed_probe` 会直接报错退出（相似对比就没有可断言的对象）。换一个库时按同样的思路重挑一份小的即可。
+- **不要把宿主目录挂到容器里的 `/lib`、`/usr` 这类路径。** podman 会报 `exec container process (missing dynamic library?) /bin/sh: No such file or directory`，看着像镜像坏了，其实是挂载点盖掉了 glibc。换 `/src` 之类的路径就好。
 - **DNS。** 地图瓦片、`npm ci` 需要 `--dns=8.8.8.8 --dns=1.1.1.1`，虚拟机默认解析器会超时。
 - **SELinux 标签。** 挂载宿主目录的实例要 `--security-opt label=disable`，否则读不到图库。
 - **antd v6 的提示是 `.ant-message-notice`**，不是 `.ant-notification`；选择器写错会误判成“没弹提示”。

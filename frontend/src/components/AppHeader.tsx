@@ -87,7 +87,6 @@ export function AppHeader({
     label: string;
     title?: string;
     manageOnly?: boolean;
-    wip?: boolean;
     run: () => void;
   }[] = [
     { key: 'bulk-move', label: '📁 批量移动', manageOnly: true, run: onBulkMove },
@@ -99,7 +98,7 @@ export function AppHeader({
       run: onOpenStaged,
     },
     { key: 'trash', label: '♻️ 回收站', manageOnly: true, run: onOpenTrash },
-    { key: 'compare', label: '◎ 相似对比', wip: true, run: onOpenCompare },
+    { key: 'compare', label: '◎ 相似对比', run: onOpenCompare },
     { key: 'set-dir', label: '⚙️ 目录', title: '切换照片目录', manageOnly: true, run: onOpenSetDir },
     { key: 'shortcuts', label: '⌨ 快捷键', run: onOpenShortcuts },
   ];
@@ -162,7 +161,7 @@ export function AppHeader({
       { type: 'divider' },
       ...visibleActions.map((action) => ({
         key: action.key,
-        label: action.wip ? `${action.label} · WIP` : action.label,
+        label: action.label,
         onClick: action.run,
       })),
       { type: 'divider' },
@@ -227,7 +226,6 @@ export function AppHeader({
             {action.key === 'compare' && <div className="sep" />}
             <Button size="small" title={action.title} onClick={action.run}>
               {action.label}
-              {action.wip && <span className="wip-tag">WIP</span>}
             </Button>
           </Fragment>
         ))}

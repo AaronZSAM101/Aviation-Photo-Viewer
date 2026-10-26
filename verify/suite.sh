@@ -6,8 +6,8 @@
 #   LIB=/path/to/Aviation ./verify/suite.sh              # 换真实图库路径
 #
 # 安全边界：
-#   - 只用 3901/3902 两个临时端口，绝不碰 3000 端口的生产实例；
-#   - 真实图库以 :ro 挂载，只用于浏览/渲染类断言；
+#   - 只用 3901/3902/3903 三个临时端口，绝不碰 3000 端口的生产实例；
+#   - 真实图库以 :ro 挂载，只用于浏览/渲染类断言和抽一小份样本库；
 #   - 所有写操作发生在 verify/.scratch 下的临时卷，跑完即删。
 # macOS 注意：Podman 虚拟机没共享 /tmp，临时卷必须放在仓库目录内。
 set -uo pipefail
@@ -17,6 +17,7 @@ CHROME=${CHROME:-docker.io/zenika/alpine-chrome:with-node}
 LIB=${LIB:-"$HOME/Library/CloudStorage/SynologyDrive-Photos/Photos/Aviation"}
 RO_PORT=${RO_PORT:-3901}
 RW_PORT=${RW_PORT:-3902}
+SIM_PORT=${SIM_PORT:-3903}
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SCRATCH="$HERE/.scratch"
 OUT="$HERE/out"
@@ -62,6 +63,29 @@ seed() {
     --entrypoint node "$CHROME" seed.mjs 2>&1 | sed 's/^/  /'
 }
 
+# 相似对比要在真实库上算 1 分钟指纹，所以给它一份从真实库抽出来的样本库：
+# probe-manifest.txt 里的 14 张小原图 + 前 4 张的副本，副本用来保证一定有"疑似同一张"的结果。
+seed_probe() {
+  mkdir -p "$SCRATCH/probe/photos"
+  local files=()
+  while IFS= read -r line; do
+    [ -n "$line" ] && files+=("$line")
+  done < "$HERE/probe-manifest.txt"
+  podman run --rm --security-opt label=disable \
+    -v "$LIB:/src:ro" -v "$SCRATCH/probe:/probe" \
+    --entrypoint /bin/sh "$IMAGE" -c '
+      set -e
+      mkdir -p /probe/photos/ProbeA /probe/photos/ProbeB
+      for f in "$@"; do cp "/src/$f" "/probe/photos/ProbeA/$(basename "$f")"; done
+      i=0
+      for f in "$@"; do
+        i=$((i + 1))
+        [ "$i" -le 4 ] && cp "/src/$f" "/probe/photos/ProbeB/dup-$i.jpg"
+      done
+      echo "样本照片 $(find /probe/photos -name "*.jpg" | wc -l) 张"
+    ' _ "${files[@]}" 2>&1 | sed 's/^/  /'
+}
+
 cleanup() {
   log "清理临时实例"
   podman ps -a --format '{{.Names}}' | grep '^pv-verify-' | xargs -r podman rm -f >/dev/null 2>&1
@@ -97,14 +121,21 @@ podman run -d --name pv-verify-ro --security-opt label=disable -p "$RO_PORT:80" 
   -e READ_ONLY=true -e PHASH_WARMUP=false -v "$LIB:/photos:ro" "$IMAGE" >/dev/null || exit 2
 podman run -d --name pv-verify-rw --security-opt label=disable -p "$RW_PORT:80" \
   -e READ_ONLY=false -e PHASH_WARMUP=false -v "$SCRATCH/photos:/photos:rw" "$IMAGE" >/dev/null || exit 2
+seed_probe
+podman run -d --name pv-verify-sim --security-opt label=disable -p "$SIM_PORT:80" \
+  -e READ_ONLY=false -e PHASH_WARMUP=false -v "$SCRATCH/probe/photos:/photos:rw" "$IMAGE" >/dev/null || exit 2
 for _ in $(seq 1 40); do
-  curl -sf -o /dev/null "localhost:$RO_PORT/api/config" && curl -sf -o /dev/null "localhost:$RW_PORT/api/config" && break
+  curl -sf -o /dev/null "localhost:$RO_PORT/api/config" \
+    && curl -sf -o /dev/null "localhost:$RW_PORT/api/config" \
+    && curl -sf -o /dev/null "localhost:$SIM_PORT/api/config" && break
   sleep 1
 done
 RO_IP=$(app_ip pv-verify-ro)
 RW_IP=$(app_ip pv-verify-rw)
+SIM_IP=$(app_ip pv-verify-sim)
 echo "只读 $RO_IP:$RO_PORT（真实库 $LIB，浏览类断言）"
 echo "可写 $RW_IP:$RW_PORT（临时库 $SCRATCH/photos，写操作类断言）"
+echo "样本 $SIM_IP:$SIM_PORT（18 张，相似对比断言）"
 curl -s "localhost:$RW_PORT/api/config" | sed 's/^/  /'
 
 log "播种 9 张测试照片（ParitySeed / ParitySeed2）"
@@ -120,6 +151,9 @@ run_suite conflict conflict-ui.mjs 0 -e WRITE_BASE="http://$RW_IP"
 log "重新播种，把临时库恢复干净"
 seed
 run_suite mobile mobile-ui.mjs 3 -e BASE="http://$RO_IP"
+
+# 相似对比走独立样本实例，前面几个套件的改名/删除不会影响它
+run_suite similar similar.mjs 0 -e BASE="http://$SIM_IP"
 
 log "结果"
 if [ -z "$FAILED" ]; then

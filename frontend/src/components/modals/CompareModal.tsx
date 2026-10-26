@@ -108,7 +108,7 @@ function CompareReasons({ reasons }: { reasons?: string[] }) {
 export function CompareModal({ open, photos, selected, onClose }: CompareModalProps) {
   const [threshold, setThreshold] = useState(5);
   const [limit, setLimit] = useState(50);
-  const [maxPhotos, setMaxPhotos] = useState(2000);
+  const [maxPhotos, setMaxPhotos] = useState(5000);
   const [pairLoading, setPairLoading] = useState(false);
   const [pairResult, setPairResult] = useState<CompareResult | null>(null);
   const [pairError, setPairError] = useState<string | null>(null);
@@ -405,7 +405,8 @@ export function CompareModal({ open, photos, selected, onClose }: CompareModalPr
         <div className="compare-action-block">
           <h3>扫描当前挂载目录</h3>
           <p>
-            自动在当前照片目录里找可能重复或很像的照片。照片很多时会比较耗时，可以先用默认设置试一次。
+            自动在当前照片目录里找可能重复或很像的照片。每张要算一次感知哈希指纹，算过就存进照片库：
+            命中缓存时整库扫描不到 1 秒，第一次算指纹大约每 1000 张 1 分钟，进度条会实时告诉你还剩多少。
           </p>
           <div className="compare-scan-controls">
             <label>

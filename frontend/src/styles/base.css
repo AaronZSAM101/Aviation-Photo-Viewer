@@ -178,7 +178,6 @@ body{
 .lbl{color:var(--muted);font-size:11px;white-space:nowrap}
 .toolbar-select{min-width:116px}
 .toolbar-search{width:160px}
-.wip-tag{display:inline-flex;align-items:center;margin-left:4px;padding:1px 4px;border-radius:3px;background:var(--accent2-soft);border:1px solid var(--accent2);color:var(--accent2);font-family:var(--mono);font-size:9px;line-height:1.1;vertical-align:middle}
 .stats{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted);white-space:nowrap;font-weight:var(--mono-weight)}
 
 #content{flex:1;padding:14px 16px;display:block}
