@@ -102,3 +102,6 @@ frontend/dist/
 
 # Local verification scratch (headless browser runs, screenshots)
 .verify/
+verify/out/
+verify/.scratch/
+verify/*.log

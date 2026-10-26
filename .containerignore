@@ -7,3 +7,6 @@ frontend/dist
 .photo_viewer
 .trash
 .verify
+verify/node_modules
+verify/out
+verify/.scratch
