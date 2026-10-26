@@ -455,10 +455,33 @@ https://你的NAS地址:3443
 | `PHASH_WARMUP` | `false` | 打开照片列表后是否自动后台预热相似照片缓存；默认关闭，避免只是浏览时持续扫原图 |
 | `SIMILAR_SCAN_WORKERS` | `4` | 相似照片扫描的后端并发数；NAS 上可调成 `2`，本地机器可用默认值 |
 | `ALLOW_RUNTIME_DIR_CHANGE` | `false` | 是否允许通过管理接口在运行时切换照片目录 |
+| `PHOTO_VIEWER_CACHE_DIR` | 未设置 | 把元数据缓存、pHash 缓存和缩略图从这个目录下的子目录里读写，而不是写在照片库里的 `.photo_viewer`。照片目录挂在云盘 / FUSE 上时用 |
 | `HTTPS_CERT_PATH` | 未设置 | HTTPS 证书 PEM 路径 |
 | `HTTPS_KEY_PATH` | 未设置 | HTTPS 私钥 PEM 路径 |
 
 `HTTPS_CERT_PATH` 和 `HTTPS_KEY_PATH` 必须同时设置。只设置其中一个时，程序会拒绝启动，避免你误以为已经启用 HTTPS。
+
+### 把缓存挪出照片库
+
+默认所有状态都写在 `<照片库>/.photo_viewer/`：`meta.json`（EXIF 缓存）、`hash_cache.json`（相似照片的 pHash）、`exif_overrides.json`（手动补的拍摄时间等覆盖值）和 `thumbs/`（缩略图）。2939 张照片的库大概是 3.6 MB 的 JSON 加 93 MB 缩略图。
+
+照片目录挂在云盘 / FUSE 上时，写这些文件既慢，又会被同步客户端抢着传。设一个外部目录：
+
+```yaml
+- name: PHOTO_VIEWER_CACHE_DIR
+  value: /fast-cache
+```
+
+实际落盘的位置是 `/fast-cache/<照片库路径转义>-<哈希>/`：每个照片库一份，运行时切库也不会两个库的缓存互相盖。启动横幅里的 `State/缓存 → ...` 就是它，目录建不出来会直接 warn。
+
+搬家和备份用 `ops/backup-state.sh`（它拿容器里的后端算目标路径，不在脚本里复刻命名规则）：
+
+```bash
+ops/backup-state.sh migrate /fast-cache   # 先搬，默认不带 93MB 缩略图
+ops/backup-state.sh backup                # 定期备份到 ~/photo-viewer-backups，保留最近 10 份
+```
+
+`exif_overrides.json` 是唯一不可再生的数据 —— 手动补的拍摄时间、机型都在里面，丢了只能重新填，务必定期 `backup`。回收站 `.trash` 属于照片库本身，不在缓存里，也别跟着删。
 
 
 

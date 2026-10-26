@@ -137,8 +137,24 @@ fn load_tls_config(cert_path: &str, key_path: &str) -> Result<rustls::ServerConf
         .map_err(|e| format!("invalid TLS certificate/key pair: {e}"))
 }
 
+fn photos_dir_from_env() -> PathBuf {
+    if let Ok(p) = std::env::var("PHOTOS_DIR") {
+        PathBuf::from(p)
+    } else if let Some(p) = option_env!("DEFAULT_PHOTOS_DIR") {
+        PathBuf::from(p)
+    } else {
+        PathBuf::from("/photos")
+    }
+}
+
 #[actix_web::main]
 async fn main() {
+    // ops/backup-state.sh 用它算出缓存目录，避免脚本自己复刻一遍命名规则
+    if std::env::args().nth(1).as_deref() == Some("--print-state-dir") {
+        println!("{}", cache_paths::state_dir(&photos_dir_from_env()).display());
+        return;
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -146,13 +162,7 @@ async fn main() {
         )
         .init();
 
-    let photos_dir = if let Ok(p) = std::env::var("PHOTOS_DIR") {
-        PathBuf::from(p)
-    } else if let Some(p) = option_env!("DEFAULT_PHOTOS_DIR") {
-        PathBuf::from(p)
-    } else {
-        PathBuf::from("/photos")
-    };
+    let photos_dir = photos_dir_from_env();
     let port = std::env::var("PORT").unwrap_or_else(|_| "3000".to_string());
     let host = std::env::var("HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
     let addr = format!("{}:{}", host, port);
@@ -192,6 +202,16 @@ async fn main() {
         addr
     );
     tracing::info!("    Read-only mode → {}", read_only);
+
+    let state_dir = cache_paths::state_dir(&photos_dir);
+    match std::fs::create_dir_all(&state_dir) {
+        Ok(_) => tracing::info!("    State/缓存 → {}", state_dir.display()),
+        Err(e) => tracing::warn!(
+            "    State/缓存 → {} 建不出来：{}（分批与元数据缓存会在写盘时报错）",
+            state_dir.display(),
+            e
+        ),
+    }
 
     let state = AppState {
         photos_dir: Arc::new(RwLock::new(photos_dir.clone())),
