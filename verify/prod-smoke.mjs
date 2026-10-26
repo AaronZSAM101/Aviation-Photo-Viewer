@@ -34,7 +34,7 @@ await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
 const config = await page.evaluate(() => fetch('/api/config').then((r) => r.json()));
 check(
   'serves the delivered version',
-  config.version === (process.env.EXPECT_VERSION || '2026-10-26-mobile5'),
+  config.version === (process.env.EXPECT_VERSION || '2026-10-27-mobile6'),
   JSON.stringify(config),
 );
 check('production stays writable mode', config.readOnly === false, JSON.stringify(config));
