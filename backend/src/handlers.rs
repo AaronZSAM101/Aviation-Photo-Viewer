@@ -1,15 +1,11 @@
-use axum::{
-    extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Response},
-    Json,
-};
+use actix_web::{http::header, web, HttpRequest, HttpResponse};
 use sha2::{Digest, Sha256};
 use std::{collections::HashMap, path::PathBuf};
 use tokio::fs;
 
-/// 缩略图缓存最大条目数（约 500 × 30KB ≈ 15MB）
-const MAX_THUMB_CACHE: usize = 500;
+/// 缩略图缓存最大条目数（约 2000 × 30KB ≈ 60MB）
+/// 上限要覆盖整库一屏屏滚动的命中集，否则后台重复读网络盘上的缓存文件。
+const MAX_THUMB_CACHE: usize = 2000;
 /// 预览图缓存最大条目数（约 50 × 1MB ≈ 50MB）
 const MAX_PREVIEW_CACHE: usize = 50;
 
@@ -107,25 +103,165 @@ fn lens_model_from_exiftool(path: &std::path::Path) -> Option<String> {
 use crate::cache_paths;
 use crate::exif::extract_exif;
 use crate::exif_edit::apply_exif_override;
-use crate::models::{AppState, CachedMeta, PhotoMeta, PhotosQuery, META_CACHE_SCHEMA_VERSION};
+use crate::models::{
+    AppState, CachedMeta, PhotoMeta, PhotosQuery, ScanError, ScanStatus, META_CACHE_SCHEMA_VERSION,
+};
+use crate::paths::{self, PathError};
 use crate::utils::{
     collect_photo_entries, collect_photo_folders, metadata_mtime_key, safe_subpath,
 };
+use std::sync::atomic::Ordering;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-/// 把整个 static/ 目录嵌入二进制（编译期）
-#[derive(rust_embed::RustEmbed)]
-#[folder = "static/"]
-struct StaticAssets;
+/// 把路径检查的失败映射为 API 状态码：语法错误 400，保留目录/符号链接 403，不存在 404。
+fn path_error_response(error: PathError) -> HttpResponse {
+    match error {
+        PathError::Invalid => HttpResponse::BadRequest().finish(),
+        PathError::Denied => HttpResponse::Forbidden().finish(),
+        PathError::NotFound => HttpResponse::NotFound().finish(),
+    }
+}
 
+/// 记录最近一次扫描的错误，并在日志里逐条指出受影响路径。
+async fn record_scan_status(
+    state: &AppState,
+    errors: &[ScanError],
+    truncated: bool,
+    scanned: usize,
+) {
+    let at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    for error in errors {
+        tracing::warn!(
+            "Photo scan error at {}: {}",
+            if error.path.is_empty() {
+                "<root>"
+            } else {
+                error.path.as_str()
+            },
+            error.message
+        );
+    }
+    let status = ScanStatus {
+        errors: errors.to_vec(),
+        truncated,
+        scanned,
+        at,
+    };
+    *state.last_scan.write().await = status;
+}
+
+/// 前端构建产物目录（Vite 的 dist）。可被 FRONTEND_DIR 覆盖。
 /// 预览图片最大尺寸
 const PREVIEW_MAX: u32 = 2400;
 
+#[derive(Clone)]
+pub struct FrontendConfig {
+    pub dir: PathBuf,
+}
+
+pub fn resolve_frontend_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("FRONTEND_DIR") {
+        return PathBuf::from(dir);
+    }
+    for candidate in ["frontend/dist", "../frontend/dist", "/app/frontend/dist"] {
+        let dir = PathBuf::from(candidate);
+        if dir.join("index.html").exists() {
+            return dir;
+        }
+    }
+    PathBuf::from("frontend/dist")
+}
+
+fn frontend_index(frontend: &FrontendConfig) -> HttpResponse {
+    match std::fs::read(frontend.dir.join("index.html")) {
+        Ok(data) => HttpResponse::Ok()
+            .content_type("text/html; charset=utf-8")
+            .insert_header((header::CACHE_CONTROL, "no-cache"))
+            .body(data),
+        Err(e) => HttpResponse::ServiceUnavailable()
+            .content_type("text/plain; charset=utf-8")
+            .body(format!(
+                "frontend build not found in {}: {e}",
+                frontend.dir.display()
+            )),
+    }
+}
+
+/// 返回前端 index.html（SPA 入口）
+pub async fn serve_frontend(frontend: web::Data<FrontendConfig>) -> HttpResponse {
+    frontend_index(&frontend)
+}
+
+/// 提供构建产物资源：/assets/* 与根目录静态文件
+pub async fn serve_asset(
+    path: web::Path<String>,
+    frontend: web::Data<FrontendConfig>,
+) -> HttpResponse {
+    let rel = path.into_inner();
+    if rel.is_empty() || !safe_subpath(&rel) {
+        return HttpResponse::BadRequest().finish();
+    }
+    let fs_path = frontend.dir.join("assets").join(&rel);
+    match fs::read(&fs_path).await {
+        Ok(data) => {
+            let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
+            HttpResponse::Ok()
+                .content_type(mime.as_ref())
+                .insert_header((header::CACHE_CONTROL, "public, max-age=31536000, immutable"))
+                .body(data)
+        }
+        Err(_) => HttpResponse::NotFound().finish(),
+    }
+}
+
+/// 根目录静态文件（favicon.svg 等）
+async fn serve_root_file(frontend: &FrontendConfig, rel: &str) -> Option<HttpResponse> {
+    if rel.is_empty() || rel.contains('/') || !safe_subpath(rel) {
+        return None;
+    }
+    let fs_path = frontend.dir.join(rel);
+    let data = fs::read(&fs_path).await.ok()?;
+    let mime = mime_guess::from_path(&fs_path).first_or_octet_stream();
+    let mut builder = HttpResponse::Ok();
+    let builder = builder.content_type(mime.as_ref());
+    // 不带 Cache-Control 会被浏览器启发式缓存：重新部署后，直接收藏 /index.html 的手机
+    // 会继续用旧入口页，而它引用的 hash 资源已经不在新镜像里，页面就白屏了。
+    if rel.ends_with(".html") {
+        builder.insert_header((header::CACHE_CONTROL, "no-cache"));
+    }
+    Some(builder.body(data))
+}
+
+/// 未匹配路径：客户端路由回退到 index.html，接口/资源路径返回 404。
+pub async fn serve_spa(req: HttpRequest, frontend: web::Data<FrontendConfig>) -> HttpResponse {
+    let path = req.path();
+    if path.starts_with("/api/")
+        || path.starts_with("/photos/")
+        || path.starts_with("/preview/")
+        || path.starts_with("/thumb/")
+        || path.starts_with("/assets/")
+    {
+        return HttpResponse::NotFound().finish();
+    }
+    let trimmed = path.trim_start_matches('/');
+    if !trimmed.is_empty() && !trimmed.contains('/') {
+        if std::path::Path::new(trimmed).extension().is_some() {
+            if let Some(resp) = serve_root_file(&frontend, trimmed).await {
+                return resp;
+            }
+            return HttpResponse::NotFound().finish();
+        }
+    }
+    frontend_index(&frontend)
+}
+
 /// 返回前端运行配置。认证通常由反向代理（如 oauth2-proxy）处理；
 /// 这里仅暴露应用级开关和代理传来的用户标识，方便 UI 做降级。
-pub async fn app_config(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-) -> Json<serde_json::Value> {
+pub async fn app_config(state: web::Data<AppState>, req: HttpRequest) -> HttpResponse {
+    let headers = req.headers();
     let user = headers
         .get("x-forwarded-user")
         .or_else(|| headers.get("x-auth-request-user"))
@@ -139,7 +275,7 @@ pub async fn app_config(
         .filter(|v| !v.is_empty())
         .map(|v| v.to_string());
 
-    Json(serde_json::json!({
+    HttpResponse::Ok().json(serde_json::json!({
         "readOnly": state.read_only,
         "version": env!("PHOTO_VIEWER_VERSION"),
         "versionSource": env!("PHOTO_VIEWER_VERSION_SOURCE"),
@@ -149,11 +285,16 @@ pub async fn app_config(
 }
 
 /// 手动刷新派生缓存：立即清空缩略图/预览缓存，移除磁盘元数据缓存，并在后台重建元数据缓存。
-pub async fn refresh_caches(
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+pub async fn refresh_caches(state: web::Data<AppState>) -> HttpResponse {
+    if state.read_only {
+        return HttpResponse::Forbidden().body("read-only mode enabled");
+    }
+
     let started = std::time::Instant::now();
-    let photos_dir = state.photos_dir.read().await.clone();
+    let (photos_dir, generation) = {
+        let pd = state.photos_dir.read().await;
+        (pd.clone(), state.dir_generation.load(Ordering::SeqCst))
+    };
     let cache_file = cache_paths::meta_cache(&photos_dir);
     let legacy_cache_file = cache_paths::legacy_meta_cache(&photos_dir);
     let thumbs_dir = cache_paths::thumbs_dir(&photos_dir);
@@ -185,11 +326,15 @@ pub async fn refresh_caches(
 
     let bg_state = state.clone();
     tokio::spawn(async move {
-        let entries =
-            tokio::task::spawn_blocking(move || collect_photo_entries(photos_dir, None).0)
+        let outcome =
+            tokio::task::spawn_blocking(move || collect_photo_entries(photos_dir, None))
                 .await
                 .unwrap_or_default();
+        let entries = outcome.entries;
         let total = entries.len();
+        let errors = outcome.errors;
+        let truncated = outcome.truncated;
+        record_scan_status(&bg_state, &errors, truncated, total).await;
         {
             let mut inflight = bg_state.meta_extract_inflight.write().await;
             inflight.clear();
@@ -228,72 +373,48 @@ pub async fn refresh_caches(
             .await;
 
         if let Ok(rebuilt) = rebuilt {
-            let mut cache = bg_state.meta_cache.write().await;
-            cache.clear();
-            for (subpath, meta) in rebuilt {
-                cache.insert(subpath, meta);
+            // 重建期间切换了目录：这批结果属于旧库，直接丢弃
+            if bg_state.dir_generation.load(Ordering::SeqCst) == generation {
+                let mut cache = bg_state.meta_cache.write().await;
+                cache.clear();
+                for (subpath, meta) in rebuilt {
+                    cache.insert(subpath, meta);
+                }
+                tracing::info!(
+                    "refresh_caches: rebuilt metadata for {} files in {:?}",
+                    total,
+                    started.elapsed()
+                );
             }
-            tracing::info!(
-                "refresh_caches: rebuilt metadata for {} files in {:?}",
-                total,
-                started.elapsed()
-            );
         }
-        bg_state.meta_extract_inflight.write().await.clear();
+        if bg_state.dir_generation.load(Ordering::SeqCst) == generation {
+            bg_state.meta_extract_inflight.write().await.clear();
+        }
     });
 
-    Ok(Json(serde_json::json!({
+    HttpResponse::Ok().json(serde_json::json!({
         "ok": true,
         "rebuilding": true,
         "elapsed_ms": started.elapsed().as_millis(),
-    })))
-}
-
-/// 返回前端 index.html
-pub async fn serve_frontend() -> Response {
-    match StaticAssets::get("index.html") {
-        Some(content) => {
-            let body = std::str::from_utf8(content.data.as_ref())
-                .unwrap_or("")
-                .to_string();
-            Html(body).into_response()
-        }
-        None => (StatusCode::NOT_FOUND, "index.html not embedded").into_response(),
-    }
-}
-
-/// 服务 /static/* 下的所有静态资源（CSS / JS / 图片等）
-/// 路由捕获的 `path` 已经不含 "static/" 前缀
-pub async fn serve_static(Path(path): Path<String>) -> Response {
-    match StaticAssets::get(&path) {
-        Some(content) => {
-            let mime = mime_guess::from_path(&path).first_or_octet_stream();
-            ([(header::CONTENT_TYPE, mime.as_ref())], content.data).into_response()
-        }
-        None => (StatusCode::NOT_FOUND, "Not found").into_response(),
-    }
+    }))
 }
 
 /// 按需读取镜头信息，作为 `list_photos` 的兜底补充
 pub async fn lens_model_for_photo(
-    Path(subpath): Path<String>,
-    State(state): State<AppState>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    if !safe_subpath(&subpath) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-
+    subpath: web::Path<String>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     let path = {
         let pd = state.photos_dir.read().await.clone();
-        pd.join(&subpath)
+        match paths::resolve_user_file(&pd, subpath.as_str()).await {
+            Ok(path) => path,
+            Err(error) => return path_error_response(error),
+        }
     };
-    if !path.exists() {
-        return Err(StatusCode::NOT_FOUND);
-    }
 
     #[cfg(target_os = "macos")]
     {
-        let lens = tokio::task::spawn_blocking(move || {
+        let lens = web::block(move || {
             use std::process::Command;
 
             let output = Command::new("mdls")
@@ -307,44 +428,50 @@ pub async fn lens_model_for_photo(
                 return None;
             }
             let value = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if value.is_empty() || value == "(null)" {
+            let lens = if value.is_empty() || value == "(null)" {
                 None
             } else {
                 Some(value)
-            }
-            .or_else(|| lens_model_from_exiftool(&path))
+            };
+            lens.or_else(|| lens_model_from_exiftool(&path))
         })
         .await
         .ok()
         .flatten();
 
-        return Ok(Json(serde_json::json!({"lens_model": lens})));
+        return HttpResponse::Ok().json(serde_json::json!({"lens_model": lens}));
     }
 
     #[cfg(not(target_os = "macos"))]
     {
-        let lens = tokio::task::spawn_blocking(move || lens_model_from_exiftool(&path))
+        let lens = web::block(move || lens_model_from_exiftool(&path))
             .await
             .ok()
             .flatten();
-        Ok(Json(serde_json::json!({"lens_model": lens})))
+        HttpResponse::Ok().json(serde_json::json!({"lens_model": lens}))
     }
 }
 
 /// 列出所有照片（含EXIF元数据）
-pub async fn list_photos(
-    Query(q): Query<PhotosQuery>,
-    State(state): State<AppState>,
-) -> Json<Vec<PhotoMeta>> {
+pub async fn list_photos(q: web::Query<PhotosQuery>, state: web::Data<AppState>) -> HttpResponse {
     let started = std::time::Instant::now();
 
     // 步骤1：在blocking池中遍历文件系统，避免阻塞tokio
-    let photos_dir = state.photos_dir.read().await.clone();
-    let entries = tokio::task::spawn_blocking(move || collect_photo_entries(photos_dir, None).0)
+    // 目录快照与代数一起取：切换照片目录后，旧目录的在途结果不再写回共享缓存
+    let (photos_dir, scan_generation) = {
+        let pd = state.photos_dir.read().await;
+        (pd.clone(), state.dir_generation.load(Ordering::SeqCst))
+    };
+    let outcome = tokio::task::spawn_blocking(move || collect_photo_entries(photos_dir, None))
         .await
         .unwrap_or_default();
+    let scan_elapsed = started.elapsed();
+    let scan_errors = outcome.errors;
+    let truncated = outcome.truncated;
+    let entries = outcome.entries;
 
     let total = entries.len();
+    record_scan_status(&state, &scan_errors, truncated, total).await;
 
     let exif_overrides = {
         let guard = state.exif_overrides.read().await;
@@ -459,20 +586,25 @@ pub async fn list_photos(
                 .await;
 
             if let Ok(new_cache) = results {
-                let mut cache = bg_state.meta_cache.write().await;
-                for (sp, m) in new_cache {
-                    cache.insert(sp, m);
+                // 目录已切换时丢弃这批结果，避免把旧库的 EXIF 写进新库的缓存
+                if bg_state.dir_generation.load(Ordering::SeqCst) == scan_generation {
+                    let mut cache = bg_state.meta_cache.write().await;
+                    for (sp, m) in new_cache {
+                        cache.insert(sp, m);
+                    }
                 }
             }
-            let mut inflight = bg_state.meta_extract_inflight.write().await;
-            for (subpath, mtime, size) in inflight_items {
-                if inflight
-                    .get(&subpath)
-                    .is_some_and(|(active_mtime, active_size)| {
-                        *active_mtime == mtime && *active_size == size
-                    })
-                {
-                    inflight.remove(&subpath);
+            if bg_state.dir_generation.load(Ordering::SeqCst) == scan_generation {
+                let mut inflight = bg_state.meta_extract_inflight.write().await;
+                for (subpath, mtime, size) in inflight_items {
+                    if inflight
+                        .get(&subpath)
+                        .is_some_and(|(active_mtime, active_size)| {
+                            *active_mtime == mtime && *active_size == size
+                        })
+                    {
+                        inflight.remove(&subpath);
+                    }
                 }
             }
         });
@@ -487,7 +619,7 @@ pub async fn list_photos(
         "1" | "true" | "yes" | "on"
     );
     if warm_phash_on_list {
-        crate::hash::spawn_phash_warmup(state.clone(), entries.clone());
+        crate::hash::spawn_phash_warmup(AppState::clone(&state), entries.clone());
     }
 
     // 步骤4（已移除）：之前在此做缓存清理（retain 只保留 live 文件），
@@ -533,100 +665,146 @@ pub async fn list_photos(
     }
 
     tracing::info!(
-        "list_photos: {} files, {} cache hits, {} queued for bg extraction in {:?}",
+        "list_photos: {} files, {} cache hits, {} queued for bg extraction, scan {:?} / handler {:?} in total",
         total,
         hits,
         bg_extract_count,
+        scan_elapsed,
         started.elapsed()
     );
 
-    Json(photos)
+    // 扫描不是“返回数组就等于完整”：错误数量单独放在响应头里，界面据此提示
+    HttpResponse::Ok()
+        .insert_header(("x-scan-errors", scan_errors.len().to_string()))
+        .insert_header(("x-scan-truncated", if truncated { "1" } else { "0" }))
+        .json(photos)
 }
 
-pub async fn list_folders(State(state): State<AppState>) -> Json<Vec<String>> {
+/// 最近一次照片扫描的摘要：错误路径 + 是否截断，供界面提示和排障使用
+pub async fn scan_status(state: web::Data<AppState>) -> HttpResponse {
+    let status = state.last_scan.read().await.clone();
+    HttpResponse::Ok().json(status)
+}
+
+pub async fn list_folders(state: web::Data<AppState>) -> HttpResponse {
     let photos_dir = state.photos_dir.read().await.clone();
     let folders = tokio::task::spawn_blocking(move || collect_photo_folders(photos_dir))
         .await
         .unwrap_or_default();
-    Json(folders)
+    HttpResponse::Ok().json(folders)
 }
 
-/// 提供原始照片
-pub async fn serve_photo(
-    Path(subpath): Path<String>,
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, axum::http::StatusCode> {
-    if !safe_subpath(&subpath) {
-        return Err(axum::http::StatusCode::BAD_REQUEST);
-    }
-    let path = {
-        let pd = state.photos_dir.read().await.clone();
-        pd.join(&subpath)
-    };
-    let data = fs::read(&path)
-        .await
-        .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
-    let mime = mime_guess::from_path(&path)
-        .first_or_octet_stream()
-        .to_string();
-    Ok(([(header::CONTENT_TYPE, mime)], data))
+/// 前端所有图片 URL 都带 `?v=<mtime>-<size>`（见 frontend/src/utils/paths.ts）。
+/// 版本串可信时可以直接查缓存，省掉一次网络盘的 stat：移动端一屏就要请求上百张缩略图。
+fn version_hint(req: &HttpRequest) -> Option<(u64, u64)> {
+    let params = web::Query::<HashMap<String, String>>::from_query(req.query_string())
+        .ok()
+        .map(|q| q.into_inner())?;
+    let (mtime, size) = params.get("v")?.split_once('-')?;
+    Some((mtime.parse().ok()?, size.parse().ok()?))
 }
 
-/// 提供缩略图（400px JPEG，内存缓存）
-pub async fn serve_thumb(
-    Path(subpath): Path<String>,
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, axum::http::StatusCode> {
-    if !safe_subpath(&subpath) {
-        return Err(axum::http::StatusCode::BAD_REQUEST);
-    }
-
-    let cache_key = subpath.clone();
-    let path = {
-        let pd = state.photos_dir.read().await.clone();
-        pd.join(&subpath)
-    };
-    let metadata = fs::metadata(&path)
-        .await
-        .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
-    let mtime = metadata_mtime_key(&metadata);
-    let size = metadata.len();
-    let disk_cache_path = {
-        let pd = state.photos_dir.read().await.clone();
-        versioned_thumb_cache_path(&pd, &subpath, mtime, size)
+/// 命中内存或磁盘缩略图缓存时返回响应，未命中返回 None 交给调用方转码
+async fn cached_thumb(
+    state: &web::Data<AppState>,
+    photos_dir: &std::path::Path,
+    generation: u64,
+    cache_key: &str,
+    mtime: u64,
+    size: u64,
+) -> Option<HttpResponse> {
+    let cache_is_current = || state.dir_generation.load(Ordering::SeqCst) == generation;
+    let ok = |data: Vec<u8>| {
+        HttpResponse::Ok()
+            .content_type("image/jpeg")
+            .insert_header((header::CACHE_CONTROL, "public, max-age=31536000, immutable"))
+            .body(data)
     };
 
-    {
+    if cache_is_current() {
         let cache = state.thumb_cache.read().await;
-        if let Some((cached_mtime, cached_size, data)) = cache.get(&cache_key) {
+        if let Some((cached_mtime, cached_size, data)) = cache.get(cache_key) {
             if *cached_mtime == mtime && *cached_size == size {
-                return Ok((
-                    [
-                        (header::CONTENT_TYPE, "image/jpeg"),
-                        (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-                    ],
-                    data.clone(),
-                ));
+                return Some(ok(data.clone()));
             }
         }
     }
 
-    if let Ok(data) = fs::read(&disk_cache_path).await {
-        {
-            let mut cache = state.thumb_cache.write().await;
-            cache.insert(cache_key, (mtime, size, data.clone()));
-            evict_cache(&mut cache, MAX_THUMB_CACHE);
+    let data = fs::read(&versioned_thumb_cache_path(photos_dir, cache_key, mtime, size))
+        .await
+        .ok()?;
+    if cache_is_current() {
+        let mut cache = state.thumb_cache.write().await;
+        cache.insert(cache_key.to_string(), (mtime, size, data.clone()));
+        evict_cache(&mut cache, MAX_THUMB_CACHE);
+    }
+    Some(ok(data))
+}
+
+/// 提供原始照片
+pub async fn serve_photo(subpath: web::Path<String>, state: web::Data<AppState>) -> HttpResponse {
+    let path = {
+        let pd = state.photos_dir.read().await.clone();
+        match paths::resolve_user_file(&pd, subpath.as_str()).await {
+            Ok(path) => path,
+            Err(error) => return path_error_response(error),
         }
-        return Ok((
-            [
-                (header::CONTENT_TYPE, "image/jpeg"),
-                (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-            ],
-            data,
-        ));
+    };
+    let data = match fs::read(&path).await {
+        Ok(d) => d,
+        Err(_) => return HttpResponse::NotFound().finish(),
+    };
+    let mime = mime_guess::from_path(&path)
+        .first_or_octet_stream()
+        .to_string();
+    // URL 里的 ?v= 已经唯一标识了文件版本，替换照片会产生新 URL
+    HttpResponse::Ok()
+        .content_type(mime)
+        .insert_header((header::CACHE_CONTROL, "public, max-age=31536000, immutable"))
+        .body(data)
+}
+
+/// 提供缩略图（400px JPEG，内存缓存）
+pub async fn serve_thumb(
+    subpath: web::Path<String>,
+    req: HttpRequest,
+    state: web::Data<AppState>,
+) -> HttpResponse {
+    let cache_key = subpath.as_str().to_string();
+    // 路径、磁盘缓存位置和代数取自同一个快照：切换目录不会拼出“旧文件 + 新缓存目录”
+    let (photos_dir, generation) = {
+        let pd = state.photos_dir.read().await;
+        (pd.clone(), state.dir_generation.load(Ordering::SeqCst))
+    };
+    let path = match paths::resolve_user_file(&photos_dir, subpath.as_str()).await {
+        Ok(path) => path,
+        Err(error) => return path_error_response(error),
+    };
+
+    if let Some((hint_mtime, hint_size)) = version_hint(&req) {
+        if let Some(response) =
+            cached_thumb(&state, &photos_dir, generation, &cache_key, hint_mtime, hint_size).await
+        {
+            return response;
+        }
     }
 
-    let thumb_data = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ()> {
+    let metadata = match fs::metadata(&path).await {
+        Ok(m) => m,
+        Err(_) => return HttpResponse::NotFound().finish(),
+    };
+    let mtime = metadata_mtime_key(&metadata);
+    let size = metadata.len();
+    let disk_cache_path = versioned_thumb_cache_path(&photos_dir, &subpath, mtime, size);
+    let cache_is_current = || state.dir_generation.load(Ordering::SeqCst) == generation;
+
+    if let Some(response) =
+        cached_thumb(&state, &photos_dir, generation, &cache_key, mtime, size).await
+    {
+        return response;
+    }
+
+    let thumb_data = match tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ()> {
         let img = image::open(&path).map_err(|_| ())?;
         let thumb = img.thumbnail(400, 400);
         let mut buf = Vec::new();
@@ -639,62 +817,67 @@ pub async fn serve_thumb(
         Ok(buf)
     })
     .await
-    .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
-    .map_err(|_| axum::http::StatusCode::UNPROCESSABLE_ENTITY)?;
-
     {
+        Ok(Ok(buf)) => buf,
+        Ok(Err(())) => return HttpResponse::UnprocessableEntity().finish(),
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+
+    if cache_is_current() {
         let mut cache = state.thumb_cache.write().await;
         cache.insert(cache_key, (mtime, size, thumb_data.clone()));
         evict_cache(&mut cache, MAX_THUMB_CACHE);
     }
 
-    if let Some(parent) = disk_cache_path.parent() {
-        if fs::create_dir_all(parent).await.is_ok() {
-            if let Err(e) = fs::write(&disk_cache_path, &thumb_data).await {
-                tracing::warn!("Failed to write thumbnail cache: {}", e);
+    // 只读实例不落盘：缩略图只留在内存缓存里
+    if !state.read_only && cache_is_current() {
+        if let Some(parent) = disk_cache_path.parent() {
+            if fs::create_dir_all(parent).await.is_ok() {
+                if let Err(e) = fs::write(&disk_cache_path, &thumb_data).await {
+                    tracing::warn!("Failed to write thumbnail cache: {}", e);
+                }
             }
         }
     }
 
-    Ok((
-        [
-            (header::CONTENT_TYPE, "image/jpeg"),
-            (header::CACHE_CONTROL, "public, max-age=31536000, immutable"),
-        ],
-        thumb_data,
-    ))
+    HttpResponse::Ok()
+        .content_type("image/jpeg")
+        .insert_header((header::CACHE_CONTROL, "public, max-age=31536000, immutable"))
+        .body(thumb_data)
 }
 
 /// 提供预览图片（最大2400px，大于该尺寸则转码为JPEG）
-pub async fn serve_preview(
-    Path(subpath): Path<String>,
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, axum::http::StatusCode> {
-    if !safe_subpath(&subpath) {
-        return Err(axum::http::StatusCode::BAD_REQUEST);
-    }
-
-    let cache_key = subpath.clone();
-    let path = {
-        let pd = state.photos_dir.read().await.clone();
-        pd.join(&subpath)
+pub async fn serve_preview(subpath: web::Path<String>, state: web::Data<AppState>) -> HttpResponse {
+    let cache_key = subpath.as_str().to_string();
+    let (photos_dir, generation) = {
+        let pd = state.photos_dir.read().await;
+        (pd.clone(), state.dir_generation.load(Ordering::SeqCst))
     };
-    let metadata = fs::metadata(&path)
-        .await
-        .map_err(|_| axum::http::StatusCode::NOT_FOUND)?;
+    let path = match paths::resolve_user_file(&photos_dir, subpath.as_str()).await {
+        Ok(path) => path,
+        Err(error) => return path_error_response(error),
+    };
+    let metadata = match fs::metadata(&path).await {
+        Ok(m) => m,
+        Err(_) => return HttpResponse::NotFound().finish(),
+    };
     let mtime = metadata_mtime_key(&metadata);
     let size = metadata.len();
+    let cache_is_current = || state.dir_generation.load(Ordering::SeqCst) == generation;
 
-    {
+    if cache_is_current() {
         let cache = state.preview_cache.read().await;
         if let Some((cached_mtime, cached_size, data, mime)) = cache.get(&cache_key) {
             if *cached_mtime == mtime && *cached_size == size {
-                return Ok(([(header::CONTENT_TYPE, mime.clone())], data.clone()));
+                return HttpResponse::Ok()
+                    .content_type(mime.clone())
+                    .insert_header((header::CACHE_CONTROL, "public, max-age=31536000, immutable"))
+                    .body(data.clone());
             }
         }
     }
 
-    let result = tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String), ()> {
+    let result = match tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String), ()> {
         // 廉价的头部探测：当图片已经足够小时避免完整解码
         if let Ok((w, h)) = image::image_dimensions(&path) {
             if w <= PREVIEW_MAX && h <= PREVIEW_MAX {
@@ -717,61 +900,75 @@ pub async fn serve_preview(
         Ok((buf, "image/jpeg".to_string()))
     })
     .await
-    .map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
-    .map_err(|_| axum::http::StatusCode::UNPROCESSABLE_ENTITY)?;
-
     {
+        Ok(Ok(result)) => result,
+        Ok(Err(())) => return HttpResponse::UnprocessableEntity().finish(),
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+
+    if cache_is_current() {
         let mut cache = state.preview_cache.write().await;
         cache.insert(cache_key, (mtime, size, result.0.clone(), result.1.clone()));
         evict_cache(&mut cache, MAX_PREVIEW_CACHE);
     }
 
-    Ok(([(header::CONTENT_TYPE, result.1)], result.0))
+    HttpResponse::Ok()
+        .content_type(result.1)
+        .insert_header((header::CACHE_CONTROL, "public, max-age=31536000, immutable"))
+        .body(result.0)
 }
 
 /// 管理接口：检查是否允许运行时切换照片目录（由环境变量控制）
-pub async fn allow_runtime_dir_change(State(state): State<AppState>) -> Json<serde_json::Value> {
+pub async fn allow_runtime_dir_change(state: web::Data<AppState>) -> HttpResponse {
     let allowed = !state.read_only
         && std::env::var("ALLOW_RUNTIME_DIR_CHANGE").unwrap_or_else(|_| "false".into()) == "true";
-    Json(serde_json::json!({"allowed": allowed}))
+    HttpResponse::Ok().json(serde_json::json!({"allowed": allowed}))
 }
 
 /// 管理接口：切换照片目录（仅在 ALLOW_RUNTIME_DIR_CHANGE=true 时允许）
 pub async fn set_photos_dir(
-    State(state): State<AppState>,
-    Json(body): Json<serde_json::Value>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    state: web::Data<AppState>,
+    body: web::Json<serde_json::Value>,
+) -> HttpResponse {
     if state.read_only {
-        return Err((StatusCode::FORBIDDEN, "read-only mode enabled".to_string()));
+        return HttpResponse::Forbidden().body("read-only mode enabled");
     }
 
     if std::env::var("ALLOW_RUNTIME_DIR_CHANGE").unwrap_or_else(|_| "false".into()) != "true" {
-        return Err((
-            StatusCode::FORBIDDEN,
-            "runtime dir change disabled".to_string(),
-        ));
+        return HttpResponse::Forbidden().body("runtime dir change disabled");
     }
 
     let path = match body.get("path").and_then(|v| v.as_str()) {
         Some(p) => p,
-        None => return Err((StatusCode::BAD_REQUEST, "missing path".into())),
+        None => return HttpResponse::BadRequest().body("missing path"),
     };
 
     let p = PathBuf::from(path);
     match fs::metadata(&p).await {
         Ok(m) if m.is_dir() => (),
-        _ => return Err((StatusCode::BAD_REQUEST, "path not a directory".into())),
+        _ => return HttpResponse::BadRequest().body("path not a directory"),
     }
 
-    // 更新状态并清空相关缓存
+    // 待处理操作都是相对路径，换库后会把它们作用到另一个库上：要求先处理干净
+    if !state.staged_ops.read().await.is_empty() {
+        return HttpResponse::Conflict()
+            .body("pending staged operations refer to the current directory; apply or clear them first");
+    }
+
+    // 更新状态并清空相关缓存。先换目录、再递增代数、最后清缓存：
+    // 在途请求读到的是（旧目录，旧代数）或（新目录，新代数），不会把旧库结果写进新库。
     {
         let mut guard = state.photos_dir.write().await;
         *guard = p.clone();
     }
+    state.dir_generation.fetch_add(1, Ordering::SeqCst);
     state.meta_cache.write().await.clear();
     state.meta_extract_inflight.write().await.clear();
     state.thumb_cache.write().await.clear();
     state.preview_cache.write().await.clear();
+    state.phash_cache.write().await.clear();
+    state.similar_jobs.write().await.clear();
+    *state.last_scan.write().await = ScanStatus::default();
 
     // 加载新的 exif_overrides（如果存在）
     let overrides_path = cache_paths::preferred_existing(
@@ -784,5 +981,5 @@ pub async fn set_photos_dir(
         *g = overrides;
     }
 
-    Ok(Json(serde_json::json!({"ok": true, "path": path})))
+    HttpResponse::Ok().json(serde_json::json!({"ok": true, "path": path}))
 }

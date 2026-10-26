@@ -1,8 +1,8 @@
 use std::{env, process::Command};
 
 fn main() {
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/refs/heads");
+    println!("cargo:rerun-if-changed=../.git/HEAD");
+    println!("cargo:rerun-if-changed=../.git/refs/heads");
     println!("cargo:rerun-if-env-changed=PHOTO_VIEWER_VERSION");
     println!("cargo:rerun-if-env-changed=PHOTO_VIEWER_VERSION_SOURCE");
 

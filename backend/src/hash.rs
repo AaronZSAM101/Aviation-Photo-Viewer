@@ -1,8 +1,4 @@
-use axum::{
-    extract::{Path, Query},
-    http::StatusCode,
-    Json,
-};
+use actix_web::{http::StatusCode, web, HttpResponse};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::{
@@ -18,26 +14,32 @@ use uuid::Uuid;
 
 use crate::cache_paths;
 use crate::models::{AppState, CachedHash, PhotoEntry, SimilarScanJob};
+use crate::paths::{self, PathError};
 use crate::utils::{
     aspect_milli, collect_photo_entries, compute_ahash, compute_color_sig, compute_dhash,
-    safe_subpath,
 };
 
-/// 对文件进行哈希计算
-pub async fn hash_file(
-    Path(subpath): Path<String>,
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
-    if !safe_subpath(&subpath) {
-        return Err(StatusCode::BAD_REQUEST);
+fn path_error_response(error: PathError) -> HttpResponse {
+    match error {
+        PathError::Invalid => HttpResponse::BadRequest().finish(),
+        PathError::Denied => HttpResponse::Forbidden().finish(),
+        PathError::NotFound => HttpResponse::NotFound().finish(),
     }
+}
+
+/// 对文件进行哈希计算
+pub async fn hash_file(subpath: web::Path<String>, state: web::Data<AppState>) -> HttpResponse {
     let path = {
         let pd = state.photos_dir.read().await.clone();
-        pd.join(&subpath)
+        match paths::resolve_user_file(&pd, subpath.as_str()).await {
+            Ok(path) => path,
+            Err(error) => return path_error_response(error),
+        }
     };
-    let data = tokio::fs::read(&path)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
+    let data = match tokio::fs::read(&path).await {
+        Ok(d) => d,
+        Err(_) => return HttpResponse::NotFound().finish(),
+    };
 
     // SHA256 哈希
     let mut hasher = Sha256::new();
@@ -46,41 +48,54 @@ pub async fn hash_file(
     let sha_hex = hex::encode(sha);
 
     // 感知哈希：8x8 平均哈希 (aHash)
-    let img = image::load_from_memory(&data).map_err(|_| StatusCode::UNPROCESSABLE_ENTITY)?;
+    let img = match image::load_from_memory(&data) {
+        Ok(img) => img,
+        Err(_) => return HttpResponse::UnprocessableEntity().finish(),
+    };
     let ph = compute_ahash(&img);
     let ph_hex = format!("{:016x}", ph);
 
-    Ok((
-        StatusCode::OK,
-        Json(json!({"sha256": sha_hex, "phash": ph_hex})),
-    ))
+    HttpResponse::Ok().json(json!({"sha256": sha_hex, "phash": ph_hex}))
 }
 
 /// 比较两张照片
 pub async fn compare_photos(
-    Query(q): Query<HashMap<String, String>>,
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
-    let a = q
-        .get("a")
-        .ok_or((StatusCode::BAD_REQUEST, "missing a".into()))?;
-    let b = q
-        .get("b")
-        .ok_or((StatusCode::BAD_REQUEST, "missing b".into()))?;
-    if !safe_subpath(a) || !safe_subpath(b) {
-        return Err((StatusCode::BAD_REQUEST, "invalid path".into()));
+    q: web::Query<HashMap<String, String>>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
+    let Some(a) = q.get("a") else {
+        return HttpResponse::BadRequest().body("missing a");
+    };
+    let Some(b) = q.get("b") else {
+        return HttpResponse::BadRequest().body("missing b");
+    };
+    if !paths::is_user_rel_path(a) || !paths::is_user_rel_path(b) {
+        return HttpResponse::BadRequest().body("invalid path");
     }
     // 一次性读取 photos_dir，避免两次读取之间 set_photos_dir 导致 pa/pb 指向不同目录
     let (pa, pb) = {
         let pd = state.photos_dir.read().await;
-        (pd.join(a), pd.join(b))
+        match (
+            paths::resolve_user_file(&pd, a).await,
+            paths::resolve_user_file(&pd, b).await,
+        ) {
+            (Ok(pa), Ok(pb)) => (pa, pb),
+            (Err(error), _) | (_, Err(error)) => {
+                if error == PathError::NotFound {
+                    return HttpResponse::NotFound().body("file not found");
+                }
+                return path_error_response(error);
+            }
+        }
     };
-    let da = tokio::fs::read(&pa)
-        .await
-        .map_err(|_| (StatusCode::NOT_FOUND, "a not found".into()))?;
-    let db = tokio::fs::read(&pb)
-        .await
-        .map_err(|_| (StatusCode::NOT_FOUND, "b not found".into()))?;
+    let da = match tokio::fs::read(&pa).await {
+        Ok(d) => d,
+        Err(_) => return HttpResponse::NotFound().body("a not found"),
+    };
+    let db = match tokio::fs::read(&pb).await {
+        Ok(d) => d,
+        Err(_) => return HttpResponse::NotFound().body("b not found"),
+    };
 
     let mut sha = Sha256::new();
     sha.update(&da);
@@ -88,33 +103,34 @@ pub async fn compare_photos(
     sha.update(&db);
     let sha_b = hex::encode(sha.finalize());
 
-    let img_a = image::load_from_memory(&da)
-        .map_err(|_| (StatusCode::UNPROCESSABLE_ENTITY, "a unreadable".into()))?;
-    let img_b = image::load_from_memory(&db)
-        .map_err(|_| (StatusCode::UNPROCESSABLE_ENTITY, "b unreadable".into()))?;
+    let img_a = match image::load_from_memory(&da) {
+        Ok(img) => img,
+        Err(_) => return HttpResponse::UnprocessableEntity().body("a unreadable"),
+    };
+    let img_b = match image::load_from_memory(&db) {
+        Ok(img) => img,
+        Err(_) => return HttpResponse::UnprocessableEntity().body("b unreadable"),
+    };
     let hash_a = image_hash_from_image(&img_a);
     let hash_b = image_hash_from_image(&img_b);
     let same_file = sha_a == sha_b;
     let assessment = assess_similarity(hash_a, hash_b, same_file);
-    Ok((
-        StatusCode::OK,
-        Json(json!({
-            "sha_a": sha_a,
-            "sha_b": sha_b,
-            "same_file": same_file,
-            "verdict": assessment.verdict,
-            "verdict_label": assessment.label,
-            "tone": assessment.tone,
-            "score": assessment.score,
-            "reasons": assessment.reasons,
-            "phash_dist": assessment.ahash_dist,
-            "ahash_dist": assessment.ahash_dist,
-            "dhash_dist": assessment.dhash_dist,
-            "color_dist": assessment.color_dist,
-            "aspect_dist": assessment.aspect_dist,
-            "same_phash": assessment.ahash_dist == 0 && assessment.dhash_dist == 0,
-        })),
-    ))
+    HttpResponse::Ok().json(json!({
+        "sha_a": sha_a,
+        "sha_b": sha_b,
+        "same_file": same_file,
+        "verdict": assessment.verdict,
+        "verdict_label": assessment.label,
+        "tone": assessment.tone,
+        "score": assessment.score,
+        "reasons": assessment.reasons,
+        "phash_dist": assessment.ahash_dist,
+        "ahash_dist": assessment.ahash_dist,
+        "dhash_dist": assessment.dhash_dist,
+        "color_dist": assessment.color_dist,
+        "aspect_dist": assessment.aspect_dist,
+        "same_phash": assessment.ahash_dist == 0 && assessment.dhash_dist == 0,
+    }))
 }
 
 #[derive(serde::Deserialize)]
@@ -351,7 +367,15 @@ where
     }
 }
 
-async fn persist_hash_cache(cache_path: PathBuf, cache: HashMap<String, CachedHash>) {
+async fn persist_hash_cache(
+    cache_path: PathBuf,
+    cache: HashMap<String, CachedHash>,
+    read_only: bool,
+) {
+    if read_only {
+        // 只读实例只在内存里维护哈希缓存
+        return;
+    }
     match serde_json::to_vec_pretty(&cache) {
         Ok(buf) => {
             let tmp_path = cache_path.with_file_name(format!(
@@ -508,11 +532,14 @@ pub fn spawn_phash_warmup(state: AppState, entries: Vec<PhotoEntry>) {
 
     tokio::spawn(async move {
         let photos_dir = state.photos_dir.read().await.clone();
+        let generation = state.dir_generation.load(Ordering::SeqCst);
         let cache_path = cache_paths::hash_cache(&photos_dir);
         let cache_snapshot = state.phash_cache.read().await.clone();
         let thumb_snapshot = state.thumb_cache.read().await.clone();
         let cache_handle = state.phash_cache.clone();
         let running_handle = state.phash_warmup_running.clone();
+        let read_only = state.read_only;
+        let generation_handle = state.dir_generation.clone();
         let total = entries.len();
 
         tracing::info!("Starting phash warmup for {} photos", total);
@@ -522,16 +549,18 @@ pub fn spawn_phash_warmup(state: AppState, entries: Vec<PhotoEntry>) {
         .await;
 
         if let Ok((new_cache, computed, reused)) = result {
-            {
-                let mut guard = cache_handle.write().await;
-                *guard = new_cache.clone();
+            if generation_handle.load(Ordering::SeqCst) == generation {
+                {
+                    let mut guard = cache_handle.write().await;
+                    *guard = new_cache.clone();
+                }
+                persist_hash_cache(cache_path, new_cache, read_only).await;
+                tracing::info!(
+                    "Finished phash warmup: {} computed, {} cached",
+                    computed,
+                    reused
+                );
             }
-            persist_hash_cache(cache_path, new_cache).await;
-            tracing::info!(
-                "Finished phash warmup: {} computed, {} cached",
-                computed,
-                reused
-            );
         }
 
         if let Ok(mut running) = running_handle.lock() {
@@ -542,22 +571,29 @@ pub fn spawn_phash_warmup(state: AppState, entries: Vec<PhotoEntry>) {
 
 /// 在当前照片目录内扫描相似照片。
 pub async fn find_similar_photos(
-    Query(q): Query<SimilarQuery>,
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    q: web::Query<SimilarQuery>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     let threshold = q.threshold.unwrap_or(5).min(16);
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
     let max_photos = q.max_photos.unwrap_or(2000).clamp(2, 10000);
     let photos_dir = state.photos_dir.read().await.clone();
+    let generation = state.dir_generation.load(Ordering::SeqCst);
     let cache_path = cache_paths::hash_cache(&photos_dir);
     let cache_snapshot = state.phash_cache.read().await.clone();
     let thumb_snapshot = state.thumb_cache.read().await.clone();
 
-    let result = tokio::task::spawn_blocking(move || {
-        let (entries, truncated) = collect_photo_entries(photos_dir, Some(max_photos));
+    let result = match web::block(move || {
+        let outcome = collect_photo_entries(photos_dir, Some(max_photos));
+        if !outcome.errors.is_empty() {
+            tracing::warn!(
+                "similar scan skipped {} unreadable paths",
+                outcome.errors.len()
+            );
+        }
         scan_similar_photos(
-            entries,
-            truncated,
+            outcome.entries,
+            outcome.truncated,
             cache_snapshot,
             thumb_snapshot,
             None,
@@ -568,18 +604,24 @@ pub async fn find_similar_photos(
         )
     })
     .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    {
+        Ok(r) => r,
+        Err(e) => return HttpResponse::InternalServerError().body(e.to_string()),
+    };
 
     match result {
         Ok(output) => {
-            {
-                let mut guard = state.phash_cache.write().await;
-                *guard = output.cache.clone();
+            // 扫描期间切换目录：这批结果属于旧库，不写回共享缓存
+            if state.dir_generation.load(Ordering::SeqCst) == generation {
+                {
+                    let mut guard = state.phash_cache.write().await;
+                    *guard = output.cache.clone();
+                }
+                persist_hash_cache(cache_path, output.cache, state.read_only).await;
             }
-            persist_hash_cache(cache_path, output.cache).await;
-            Ok((StatusCode::OK, Json(output.value)))
+            HttpResponse::Ok().json(output.value)
         }
-        Err(e) => Err(e),
+        Err((status, msg)) => HttpResponse::build(status).body(msg),
     }
 }
 
@@ -713,9 +755,9 @@ where
 }
 
 pub async fn start_similar_scan_job(
-    Query(q): Query<SimilarQuery>,
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    q: web::Query<SimilarQuery>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     let threshold = q.threshold.unwrap_or(5).min(16);
     let limit = q.limit.unwrap_or(50).clamp(1, 500);
     let max_photos = q.max_photos.unwrap_or(2000).clamp(2, 10000);
@@ -751,19 +793,28 @@ pub async fn start_similar_scan_job(
     }
 
     let photos_dir = state.photos_dir.read().await.clone();
+    let generation = state.dir_generation.load(Ordering::SeqCst);
     let cache_path = cache_paths::hash_cache(&photos_dir);
     let cache_snapshot = state.phash_cache.read().await.clone();
     let thumb_snapshot = state.thumb_cache.read().await.clone();
     let cache_handle: Arc<RwLock<HashMap<String, CachedHash>>> = state.phash_cache.clone();
+    let generation_handle = state.dir_generation.clone();
+    let read_only = state.read_only;
 
     tokio::spawn(async move {
         update_job(&job, |j| j.status = "running".to_string());
         let job_for_scan = job.clone();
-        let scan_result = tokio::task::spawn_blocking(move || {
-            let (entries, truncated) = collect_photo_entries(photos_dir, Some(max_photos));
+        let scan_result = web::block(move || {
+            let outcome = collect_photo_entries(photos_dir, Some(max_photos));
+            if !outcome.errors.is_empty() {
+                tracing::warn!(
+                    "similar job skipped {} unreadable paths",
+                    outcome.errors.len()
+                );
+            }
             scan_similar_photos(
-                entries,
-                truncated,
+                outcome.entries,
+                outcome.truncated,
                 cache_snapshot,
                 thumb_snapshot,
                 Some(job_for_scan),
@@ -777,11 +828,13 @@ pub async fn start_similar_scan_job(
 
         match scan_result {
             Ok(Ok(output)) => {
-                {
-                    let mut guard = cache_handle.write().await;
-                    *guard = output.cache.clone();
+                if generation_handle.load(Ordering::SeqCst) == generation {
+                    {
+                        let mut guard = cache_handle.write().await;
+                        *guard = output.cache.clone();
+                    }
+                    persist_hash_cache(cache_path, output.cache, read_only).await;
                 }
-                persist_hash_cache(cache_path, output.cache).await;
                 update_job(&job, |j| {
                     j.status = "done".to_string();
                     j.pairs = output
@@ -807,22 +860,24 @@ pub async fn start_similar_scan_job(
         }
     });
 
-    Ok((StatusCode::ACCEPTED, Json(json!({ "id": id }))))
+    HttpResponse::Accepted().json(json!({ "id": id }))
 }
 
 pub async fn get_similar_scan_job(
-    Path(id): Path<String>,
-    axum::extract::State(state): axum::extract::State<AppState>,
-) -> Result<(StatusCode, Json<serde_json::Value>), StatusCode> {
+    id: web::Path<String>,
+    state: web::Data<AppState>,
+) -> HttpResponse {
     let job = {
         let jobs = state.similar_jobs.read().await;
-        jobs.get(&id).cloned()
-    }
-    .ok_or(StatusCode::NOT_FOUND)?;
+        jobs.get(&*id).cloned()
+    };
+    let Some(job) = job else {
+        return HttpResponse::NotFound().finish();
+    };
 
-    let snapshot = job
-        .lock()
-        .map(|j| j.clone())
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok((StatusCode::OK, Json(json!(snapshot))))
+    let snapshot = match job.lock() {
+        Ok(j) => j.clone(),
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    HttpResponse::Ok().json(json!(snapshot))
 }

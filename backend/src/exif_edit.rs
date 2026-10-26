@@ -1,8 +1,8 @@
-use axum::{extract::State, http::StatusCode, Json};
+use actix_web::{web, HttpResponse};
 use serde_json::json;
 use std::{collections::HashMap, path::PathBuf};
 
-use crate::utils::safe_subpath;
+use crate::paths::{self, PathError};
 use crate::{
     cache_paths,
     exif::date_to_sort_key,
@@ -122,29 +122,27 @@ pub async fn persist_exif_overrides_atomic(
 }
 
 pub async fn update_exif(
-    State(state): State<AppState>,
-    Json(req): Json<ExifUpdateRequest>,
-) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, String)> {
+    state: web::Data<AppState>,
+    req: web::Json<ExifUpdateRequest>,
+) -> HttpResponse {
     if state.read_only {
-        return Err((StatusCode::FORBIDDEN, "read-only mode enabled".to_string()));
+        return HttpResponse::Forbidden().body("read-only mode enabled");
     }
 
-    if !safe_subpath(&req.src) {
-        return Err((StatusCode::BAD_REQUEST, "invalid src".to_string()));
+    // 路径检查与覆盖文件路径取自同一份目录快照
+    let photos_dir = state.photos_dir.read().await.clone();
+    match paths::resolve_user_file(&photos_dir, &req.src).await {
+        Ok(_) => {}
+        Err(PathError::Invalid) => return HttpResponse::BadRequest().body("invalid src"),
+        Err(PathError::Denied) => {
+            return HttpResponse::Forbidden().body("path is not a regular photo file")
+        }
+        Err(PathError::NotFound) => {
+            return HttpResponse::NotFound().body("source file not found")
+        }
     }
 
-    let path = {
-        let pd = state.photos_dir.read().await.clone();
-        pd.join(&req.src)
-    };
-    if !path.exists() {
-        return Err((StatusCode::NOT_FOUND, "source file not found".to_string()));
-    }
-
-    let cache_path = {
-        let pd = state.photos_dir.read().await.clone();
-        cache_paths::exif_overrides(&pd)
-    };
+    let cache_path = cache_paths::exif_overrides(&photos_dir);
 
     // 先更新内存 map，拍快照后立即释放写锁，再在锁外做文件 I/O
     // 避免持写锁期间 list_photos 等读操作被长时间阻塞
@@ -160,12 +158,9 @@ pub async fn update_exif(
     };
 
     if let Err(e) = persist_exif_overrides_atomic(&cache_path, &snapshot).await {
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, e));
+        return HttpResponse::InternalServerError().body(e);
     }
 
     let sort_key = date_to_sort_key(req.exif.date_taken.as_deref());
-    Ok((
-        StatusCode::OK,
-        Json(json!({"saved": true, "src": req.src, "sort_key": sort_key})),
-    ))
+    HttpResponse::Ok().json(json!({"saved": true, "src": req.src, "sort_key": sort_key}))
 }

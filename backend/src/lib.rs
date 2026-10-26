@@ -5,6 +5,7 @@ pub mod file_ops;
 pub mod handlers;
 pub mod hash;
 pub mod models;
+pub mod paths;
 pub mod utils;
 
 pub use models::{AppState, ExifData, PhotoMeta};

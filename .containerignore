@@ -1,0 +1,9 @@
+.git
+.github
+backend/target
+frontend/node_modules
+frontend/dist
+**/.DS_Store
+.photo_viewer
+.trash
+.verify

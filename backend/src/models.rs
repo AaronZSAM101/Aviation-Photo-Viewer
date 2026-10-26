@@ -119,6 +119,31 @@ pub struct AppState {
     pub phash_warmup_running: Arc<Mutex<bool>>,
     /// 相对路径 → 人工编辑后的 EXIF 覆盖值
     pub exif_overrides: Arc<RwLock<HashMap<String, ExifData>>>,
+    /// 串行化会读写 .trash 及 manifest 的批次，避免并发 apply 互相覆盖映射
+    pub trash_lock: Arc<tokio::sync::Mutex<()>>,
+    /// 照片目录切换代数：切换后递增，用来丢弃旧目录的在途结果
+    pub dir_generation: Arc<std::sync::atomic::AtomicU64>,
+    /// 最近一次照片扫描的结果摘要（含错误），供 /api/scan/status 与界面提示使用
+    pub last_scan: Arc<RwLock<ScanStatus>>,
+}
+
+/// 单条扫描错误（目录不可读、路径过长等）
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ScanError {
+    pub path: String,
+    pub message: String,
+}
+
+/// 最近一次扫描摘要
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ScanStatus {
+    /// 受影响的相对路径 → 错误信息
+    pub errors: Vec<ScanError>,
+    /// 是否因为 max_photos 截断（截断不算错误）
+    pub truncated: bool,
+    pub scanned: usize,
+    /// Unix 毫秒时间戳；0 表示还没有扫描过
+    pub at: u64,
 }
 
 /// 文件操作类型
