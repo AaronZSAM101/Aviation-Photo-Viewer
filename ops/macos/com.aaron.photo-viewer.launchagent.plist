@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 安装方法见 README 的“开机自动拉起”：把 __REPO__ / __HOME__ 替换成真实路径后
+     放进 ~/Library/LaunchAgents/，再用 launchctl bootstrap 载入。 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.aaron.photo-viewer</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__REPO__/ops/macos/boot.sh</string>
+  </array>
+
+  <!-- 登录就跑一次 -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- 之后每 15 分钟当一次看门狗：boot.sh 是幂等的，健康就立刻退出；
+       手动 podman stop 掉的服务会在 15 分钟内被拉回来，要长期停就别留着这个 LaunchAgent。 -->
+  <key>StartInterval</key>
+  <integer>900</integer>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- launchd 默认 PATH 里没有 /opt/podman/bin -->
+    <key>PATH</key>
+    <string>/opt/podman/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    <key>HOME</key>
+    <string>__HOME__</string>
+  </dict>
+
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/photo-viewer-boot.log</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/photo-viewer-boot.log</string>
+</dict>
+</plist>

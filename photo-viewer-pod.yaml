@@ -4,12 +4,33 @@ kind: Pod
 metadata:
   name: photo-viewer-pod
 spec:
+  # 进程崩了、健康检查连错 3 次，podman 会重启容器；配合 VM 里的
+  # podman-restart.service（见 README 的“开机自动拉起”），机器重启后服务也会自己回来。
+  restartPolicy: Always
   containers:
     - name: photo-viewer
       image: localhost/photo-viewer:latest
+      imagePullPolicy: IfNotPresent
       ports:
         - containerPort: 80
           hostPort: 3000
+      # podman 把 livenessProbe 翻译成容器健康检查（CMD-SHELL curl -f），
+      # 失败到 failureThreshold 就重启容器；readinessProbe podman 不实现，
+      # 留着是给真正的 Kubernetes 用的。
+      livenessProbe:
+        httpGet:
+          path: /api/config
+          port: 80
+        initialDelaySeconds: 30
+        periodSeconds: 60
+        timeoutSeconds: 5
+        failureThreshold: 3
+      readinessProbe:
+        httpGet:
+          path: /api/config
+          port: 80
+        initialDelaySeconds: 10
+        periodSeconds: 30
       env:
         - name: PHOTOS_DIR
           value: /photos

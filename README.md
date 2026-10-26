@@ -211,6 +211,40 @@ podman play kube --down photo-viewer-pod.yaml
 
 Podman Desktop 也可以通过图形界面导入或创建 Pod。命令行不是必须的。
 
+### 让服务自己活过来
+
+`photo-viewer-pod.yaml` 里已经写好了三层自愈，改动代码或换机器时不用重新理解一遍：
+
+1. `restartPolicy: Always`：容器进程退出后由 Podman 重启（`podman play kube` 不给这个字段时默认也是 Always，写出来是为了显式）。
+2. `livenessProbe`：Podman 会把它翻译成容器健康检查 —— `curl -f http://localhost:80/api/config`，连续失败 3 次就重启容器。所以运行镜像里必须有 `curl`，`Containerfile` 已经装了。用 `podman ps` 能看到 `(healthy)`。`readinessProbe` Podman 不实现，留着是给真正的 Kubernetes 用的。
+3. VM 里的 `podman-restart.service`：**这个开关出厂是 disabled**。不打开它，机器重启、`podman machine` 重新起来之后，`restart: always` 不会帮你把容器拉回来。
+
+macOS 上前两条不够用，因为 `podman machine` 本身不会随登录启动。仓库提供了 `ops/macos/`：
+
+```bash
+bash ops/macos/boot.sh          # 先手动跑一次，确认能起来
+```
+
+脚本是幂等的：machine 没跑就启动、顺手打开 `podman-restart.service`、等 Synology Drive 把图库挂上、已经有健康服务就什么都不做。要开机自动执行，把它注册成 LaunchAgent：
+
+```bash
+sed -e "s|__REPO__|$(pwd)|g" -e "s|__HOME__|$HOME|g" \
+  ops/macos/com.aaron.photo-viewer.launchagent.plist \
+  > "$HOME/Library/LaunchAgents/com.aaron.photo-viewer.plist"
+launchctl bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/com.aaron.photo-viewer.plist"
+```
+
+之后每次登录跑一次，另外每 15 分钟当一次看门狗；日志在 `~/Library/Logs/photo-viewer-boot.log`。不想要了就：
+
+```bash
+launchctl bootout "gui/$(id -u)/com.aaron.photo-viewer"
+rm "$HOME/Library/LaunchAgents/com.aaron.photo-viewer.plist"
+```
+
+注意看门狗会把手动 `podman stop` 掉的服务在 15 分钟内拉回来，要长期停用就先 `bootout`。
+
+群晖 Container Manager 用同样的 YAML 时，在容器常规设置里勾“自动重启”即可，DSM 会自己处理开机拉起。
+
 ### 方式三：用图形界面创建容器
 
 在 Podman Desktop、Docker Desktop 或群晖 Container Manager 中，核心配置都一样：

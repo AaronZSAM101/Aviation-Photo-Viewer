@@ -37,8 +37,9 @@ RUN touch src/main.rs && cargo build --release --locked
 # ── Stage 3: Runtime ──────────────────────────────────────────────────────────
 FROM debian:trixie-slim
 
+# curl 是给 podman 的健康检查用的：livenessProbe 会被翻译成 CMD-SHELL curl
 RUN apt-get update && \
-    apt-get install -y ca-certificates libimage-exiftool-perl && \
+    apt-get install -y --no-install-recommends ca-certificates libimage-exiftool-perl curl && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/photo-viewer /usr/local/bin/photo-viewer
