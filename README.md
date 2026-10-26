@@ -569,6 +569,37 @@ cd ../backend && cargo build --release
 PHOTOS_DIR=/path/to/photos PORT=3000 FRONTEND_DIR=../frontend/dist ./target/release/photo-viewer
 ```
 
+### 验证改动
+
+后端单元测试：
+
+```bash
+cd backend && cargo test
+```
+
+前端纯函数单元测试（分组、路径、分批状态、格式化）：
+
+```bash
+cd frontend && npm test        # vitest，无浏览器依赖
+```
+
+功能与交互回归（需要 Podman，全部在容器里跑，不碰 3000 端口的生产实例）：
+
+```bash
+./verify/suite.sh localhost/photo-viewer:latest
+```
+
+它会起两个临时实例（只读挂真实图库 + 可写挂临时卷），跑 parity / batch4-ui / conflict-ui / mobile-ui 四套断言，最后打印通过或失败的套件。细节和已知坑见 [verify/README.md](verify/README.md)。
+
+镜像装到生产之后再冒烟一次：
+
+```bash
+podman run --rm --shm-size=1g --network podman \
+  -v "$PWD/verify:/work" -w /work --add-host=host.containers.internal:host-gateway \
+  -e CHROME_PATH=/usr/lib/chromium/chromium -e OUT_DIR=/work/out \
+  --entrypoint node docker.io/zenika/alpine-chrome:with-node prod-smoke.mjs
+```
+
 ### 构建镜像
 
 ```bash
@@ -633,10 +664,12 @@ photo-viewer/
         ├── styles/        # 主题变量与布局
         ├── types/         # 与后端 JSON 对应的类型
         ├── config/        # 前端常量
-        └── utils/         # 分组、格式化、图片加载
+        └── utils/         # 分组、格式化、图片加载（含 *.test.ts 单元测试）
 ```
 
 重构前的原生 JS 前端 `static/` 已删除，前端只保留 `frontend/`。
+
+`verify/` 是验收工具：无头浏览器跑的功能/交互/性能套件加一键脚本 `verify/suite.sh`，改代码后要重新跑，详见 [verify/README.md](verify/README.md)。
 
 ### 技术栈
 
