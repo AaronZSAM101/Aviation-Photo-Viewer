@@ -24,12 +24,13 @@ Aviation-Photo-Viewer 是一个轻量的照片浏览和管理工具，并且对�
 
 ### 照片浏览和检索
 
-- 支持 JPG / PNG / WebP / TIFF 格式，未来可能会支持读取 RAW 格式照片。
+- 支持 JPG / PNG / WebP / TIFF，以及相机 RAW（CR2 / CR3 / NEF / ARW / DNG 等）——RAW 取的是文件内嵌的预览图，不做全尺寸解码，所以能看能比，不适合当输出图。
 - 自动生成缩略图和预览图，打开大量照片时更快。
 - 支持按拍摄时间、文件夹、文件名、文件大小等方式查看和排序。
 - 支持按年、月、日的时间尺度分组，适合浏览长期积累的照片。
 - 支持按文件夹分组，适合已经在硬盘或 NAS 上整理好目录的照片库。
-- 支持搜索照片文件名和路径。
+- 支持搜索照片文件名、路径和机号（`B-5487` 和 `B5487` 算同一个）。
+- 机号从文件名读；文件名里没有时可以按一次机身文字识别（容器里装了 tesseract 才可用），结果写进这张照片的元数据缓存。
 
 ### 大图查看和辅助分析
 
@@ -44,6 +45,8 @@ Aviation-Photo-Viewer 是一个轻量的照片浏览和管理工具，并且对�
 - 支持暂存并批量执行文件操作：删除、移动、复制、重命名、恢复。
 - 支持回收站式删除，降低误删风险。
 - 支持手动编辑部分 EXIF 覆盖信息。
+- 支持拍摄点档案：老照片没写 GPS，坐标按文件夹记一次，再单独补给某张照片的 EXIF 覆盖层，原图一个字节都不改。
+- 支持彩绘提醒：读外部机场排班数据源，按机号命中「我的关注」和「值得拍的目标」，点机号直接跳到相册搜索。不配数据源时只用本地关注表，详见环境变量一节。
 - 支持只读模式，只浏览不允许改文件。
 
 ### 部署和访问
@@ -460,6 +463,10 @@ https://你的NAS地址:3443
 | `PHOTO_VIEWER_CACHE_DIR` | 未设置 | 把元数据缓存、pHash 缓存和缩略图从这个目录下的子目录里读写，而不是写在照片库里的 `.photo_viewer`。照片目录挂在云盘 / FUSE 上时用 |
 | `HTTPS_CERT_PATH` | 未设置 | HTTPS 证书 PEM 路径 |
 | `HTTPS_KEY_PATH` | 未设置 | HTTPS 私钥 PEM 路径 |
+| `AIRFRAME_URL` | 未设置 | 彩绘提醒的排班数据源根地址（它家的机场计划服务）。不设就不 externally 请求，提醒只剩本地关注表 |
+| `AIRFRAME_PASSWORD` | 未设置 | 上面那台的整站密码，走 `POST /access/login` 换 cookie。只从环境变量读，密码不落进照片库目录 |
+| `LIVERY_FEED_URL` | 未设置 | `AIRFRAME_URL` 的别名，两者都设时以 `AIRFRAME_URL` 为准 |
+| `LIVERY_FEED_TOKEN` | 未设置 | 数据源换成 Bearer 鉴权时用，跟密码二选一 |
 
 `HTTPS_CERT_PATH` 和 `HTTPS_KEY_PATH` 必须同时设置。只设置其中一个时，程序会拒绝启动，避免你误以为已经启用 HTTPS。
 
@@ -569,7 +576,7 @@ A：不建议。项目没有内置账号系统，请放在 DSM 反向代理、oa
 
 ### 支持的图片格式
 
-JPG · PNG · WebP · TIFF
+JPG · PNG · WebP · TIFF · RAW（CR2 / CR3 / NEF / ARW / DNG / ORF / RW2 等，取内嵌预览图）
 
 ### API 端点
 
@@ -598,6 +605,15 @@ JPG · PNG · WebP · TIFF
 | `GET /api/similar/jobs/:id` | 查看后台扫描进度和结果 |
 | `GET /api/exif/lens/:path` | 读取照片的镜头型号 |
 | `POST /api/exif/update` | 保存手动 EXIF 覆盖值 |
+| `POST /api/reg/ocr` | 用机身文字识别补这张照片的机号（容器里没 tesseract 时返回 503） |
+| `GET /api/spots` | 拍摄点档案：文件夹 → 坐标 |
+| `POST /api/spots` | 保存一个拍摄点档案 |
+| `POST /api/spots/delete` | 删除一个拍摄点档案 |
+| `POST /api/spot/apply` | 把所在文件夹的档案坐标补进这张照片的 EXIF 覆盖层 |
+| `GET /api/livery/feed?airport=&day=&refresh=` | 排班提醒：按机场三字码 + `YYYY-MM-DD` 取，机场和日期都先卡格式再拼 URL |
+| `GET /api/livery/watch` | 关注表（本机手写的机号清单） |
+| `POST /api/livery/watch` | 记一台：`{registration, name, note?, documented?}`，机号按数据源那套规则规整 |
+| `POST /api/livery/watch/delete` | 删掉一台 |
 | `GET /api/admin/allow_set_dir` | 是否允许运行时切换照片目录 |
 | `POST /api/admin/set_photos_dir` | 运行时切换照片目录 |
 
@@ -658,7 +674,7 @@ cd frontend && npm test        # vitest，无浏览器依赖
 ./verify/suite.sh localhost/photo-viewer:latest
 ```
 
-它会起三个临时实例（只读挂真实图库 + 可写挂临时卷 + 一份从真实库只读抽出来的 18 张样本库），跑 parity / batch4-ui / conflict-ui / mobile-ui / similar 五套断言，最后打印通过或失败的套件。细节和已知坑见 [verify/README.md](verify/README.md)。
+它会起三个临时实例（只读挂真实图库 + 可写挂临时卷 + 一份从真实库只读抽出来的 18 张样本库），跑 parity / batch4-ui / conflict-ui / mobile-ui / similar / livery 六套断言，最后打印通过或失败的套件。彩绘提醒那一套刻意不给排班数据源，只验「没配时怎么说」和本地关注表的读写闭环。细节和已知坑见 [verify/README.md](verify/README.md)。
 
 镜像装到生产之后再冒烟一次：
 
