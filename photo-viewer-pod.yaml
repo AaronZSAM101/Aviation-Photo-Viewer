@@ -46,6 +46,12 @@ spec:
           value: "false"
         - name: SIMILAR_SCAN_WORKERS
           value: "4"
+        # 彩绘提醒默认看哪座城市的排班。用户在页面上自己选过一次机场之后就一直跟着他，
+        # 这里只兜底第一次打开面板的人。改成别的三字码即可（只能是前端下拉框里有的：
+        # PVG/PEK/CAN/SZX/TFU/HGH/PKX/SHA/HKG/NRT/SIN/LHR/FRA/AMS/LAX/JFK），
+        # 写错或删掉这一条都退回 SHA。
+        - name: LIVERY_DEFAULT_AIRPORT
+          value: "SHA"
       volumeMounts:
         - name: photos-volume
           mountPath: /photos
