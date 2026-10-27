@@ -467,6 +467,7 @@ https://你的NAS地址:3443
 | `AIRFRAME_PASSWORD` | 未设置 | 上面那台的整站密码，走 `POST /access/login` 换 cookie。只从环境变量读，密码不落进照片库目录 |
 | `LIVERY_FEED_URL` | 未设置 | `AIRFRAME_URL` 的别名，两者都设时以 `AIRFRAME_URL` 为准 |
 | `LIVERY_FEED_TOKEN` | 未设置 | 数据源换成 Bearer 鉴权时用，跟密码二选一 |
+| `LIVERY_DEFAULT_AIRPORT` | `SHA` | 彩绘提醒默认看哪座城市的排班，`/api/config` 的 `defaultAirport` 就是它。用户在本机自己选过一次之后就一直跟着用户，这个值只兜底；不是三位字母时退回 `SHA` |
 
 `HTTPS_CERT_PATH` 和 `HTTPS_KEY_PATH` 必须同时设置。只设置其中一个时，程序会拒绝启动，避免你误以为已经启用 HTTPS。
 

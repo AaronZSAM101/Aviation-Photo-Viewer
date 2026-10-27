@@ -285,6 +285,8 @@ pub async fn app_config(state: web::Data<AppState>, req: HttpRequest) -> HttpRes
         "ocrAvailable": crate::registration::ocr_available(),
         // 彩绘提醒有没有配数据源（AIRFRAME_URL / LIVERY_FEED_URL）；没配就只有关注清单
         "liveryConfigured": crate::livery::feed_configured(),
+        // 用户没自己选过机场时的兜底，来自 LIVERY_DEFAULT_AIRPORT
+        "defaultAirport": crate::livery::default_airport(),
     }))
 }
 

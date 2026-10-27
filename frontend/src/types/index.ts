@@ -64,6 +64,7 @@ export interface AppConfig {
   readOnly?: boolean;
   ocrAvailable?: boolean;
   liveryConfigured?: boolean;
+  defaultAirport?: string;
   version?: string | null;
   versionSource?: string | null;
   user?: string | null;

@@ -28,7 +28,7 @@ import {
   setSort,
 } from '../store/appSlice';
 import { setPhotos, setSelection, setSpots, setStagedOps } from '../store/photosSlice';
-import { refreshLiveryFeed } from '../store/liverySlice';
+import { applyServerAirport, refreshLiveryFeed } from '../store/liverySlice';
 import type { GalleryCardEntry, OpKind, Photo, SortKey } from '../types';
 import { errorText } from '../utils/errors';
 import { hasAnyExif } from '../utils/format';
@@ -237,7 +237,9 @@ export function GalleryPage() {
     startedRef.current = true;
     void (async () => {
       try {
-        dispatch(applyConfig(await PhotosApi.getConfig()));
+        const config = await PhotosApi.getConfig();
+        dispatch(applyConfig(config));
+        dispatch(applyServerAirport(config.defaultAirport));
       } catch {
         // 配置读取失败时保持默认（可写）状态，与旧版一致
       }

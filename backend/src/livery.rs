@@ -289,6 +289,19 @@ pub fn feed_configured() -> bool {
     feed_config().is_some()
 }
 
+/// 默认机场：看哪座城市的排班是部署决定，不该写死在前端里。没配、或配得不像 IATA
+/// 三字码就退回 SHA（AIRFRAME 自己的默认值）；前端也只把它当成「用户没自己选过」时的兜底。
+pub fn default_airport() -> String {
+    default_airport_from(env_text("LIVERY_DEFAULT_AIRPORT").as_deref())
+}
+
+fn default_airport_from(value: Option<&str>) -> String {
+    value
+        .map(|v| v.trim().to_ascii_uppercase())
+        .filter(|v| valid_airport(v))
+        .unwrap_or_else(|| "SHA".to_string())
+}
+
 fn now_secs() -> i64 {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -930,5 +943,13 @@ mod tests {
     async fn missing_watchlist_loads_as_empty() {
         let map = load_watchlist(&std::env::temp_dir().join("pv-watch-definitely-absent.json")).await;
         assert!(map.is_empty());
+    }
+
+    #[test]
+    fn default_airport_follows_env_but_only_three_letter_codes() {
+        assert_eq!(default_airport_from(None), "SHA");
+        assert_eq!(default_airport_from(Some("  szx ")), "SZX");
+        assert_eq!(default_airport_from(Some("")), "SHA");
+        assert_eq!(default_airport_from(Some("SZX?x=1")), "SHA");
     }
 }

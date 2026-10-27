@@ -5,8 +5,8 @@ import type { LiveryFeed, WatchItem } from '../types';
 import { errorText } from '../utils/errors';
 import { dayValue, LIVERY_AIRPORTS, watchKey } from '../utils/livery';
 
-// 数据源是他家机器上的排班站，默认机场照抄 AIRFRAME 自己的默认值；
-// 真正用的是本机记住的那一个，切一次就不用再选。
+// 数据源是他家机器上的排班站，默认机场由部署用 LIVERY_DEFAULT_AIRPORT 配、从 /api/config
+// 拿；这里这份只是配置还没到之前的垫底值（跟 AIRFRAME 自己的默认值一致）。
 const FALLBACK_AIRPORT = 'SHA';
 
 interface LiveryPrefs {
@@ -14,16 +14,17 @@ interface LiveryPrefs {
   dayOffset: number;
 }
 
-function readPrefs(): LiveryPrefs {
-  const fallback: LiveryPrefs = { airport: FALLBACK_AIRPORT, dayOffset: 0 };
+/** airportFromUser：本机 localStorage 里有没有用户自己选过的机场。有就别再拿部署默认值去盖他。 */
+function readPrefs(): LiveryPrefs & { airportFromUser: boolean } {
+  const fallback = { airport: FALLBACK_AIRPORT, dayOffset: 0, airportFromUser: false };
   try {
     const stored = JSON.parse(localStorage.getItem(LIVERY_PREF_KEY) || '{}') as Record<string, unknown>;
     const storedAirport = typeof stored.airport === 'string' ? stored.airport.toUpperCase() : '';
+    const chosen = LIVERY_AIRPORTS.some((option) => option.code === storedAirport);
     return {
-      airport: LIVERY_AIRPORTS.some((option) => option.code === storedAirport)
-        ? storedAirport
-        : fallback.airport,
+      airport: chosen ? storedAirport : fallback.airport,
       dayOffset: stored.dayOffset === 1 ? 1 : 0,
+      airportFromUser: chosen,
     };
   } catch {
     return fallback;
@@ -39,6 +40,8 @@ function persistPrefs(prefs: LiveryPrefs) {
 }
 
 export interface LiveryState extends LiveryPrefs {
+  /** 用户在这台机器上自己选过机场：选过就一直跟着他，部署默认值不再插手 */
+  airportFromUser: boolean;
   /** 关注表：后端 watchlist.json，按机号排序。数据源有没有配走 app.liveryConfigured */
   watchlist: WatchItem[];
   feed: LiveryFeed | null;
@@ -79,7 +82,15 @@ const liverySlice = createSlice({
     },
     setAirport: (state, action: PayloadAction<string>) => {
       state.airport = action.payload.toUpperCase();
+      state.airportFromUser = true;
       persistPrefs({ airport: state.airport, dayOffset: state.dayOffset });
+    },
+    // 部署配的默认机场（LIVERY_DEFAULT_AIRPORT → /api/config.defaultAirport）。
+    // 只认下拉框里有的三字码，否则 Select 会显示一个选项里不存在的值。
+    applyServerAirport: (state, action: PayloadAction<string | undefined>) => {
+      const code = (action.payload || '').toUpperCase();
+      if (state.airportFromUser || !LIVERY_AIRPORTS.some((option) => option.code === code)) return;
+      state.airport = code;
     },
     setDayOffset: (state, action: PayloadAction<number>) => {
       state.dayOffset = action.payload === 1 ? 1 : 0;
@@ -107,6 +118,7 @@ export const {
   putWatch,
   dropWatch,
   setAirport,
+  applyServerAirport,
   setDayOffset,
   feedRequested,
   feedReceived,
