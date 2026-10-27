@@ -18,7 +18,7 @@ page.on('request', (req) => {
   else void req.continue();
 });
 await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
-await page.waitForFunction(() => document.querySelectorAll('.card').length >= 2939, { timeout: 180000 });
+await page.waitForFunction(() => document.querySelectorAll('.card').length > 0);
 await page.waitForFunction(() => !document.querySelector('#loading.show'));
 await new Promise((r) => setTimeout(r, 1500));
 

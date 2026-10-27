@@ -42,7 +42,7 @@ run_suite() {
   podman rm -f "pv-verify-$tag" >/dev/null 2>&1
   local fails
   fails=0
-  [ -f "$raw" ] && fails=$(grep -c '^FAIL' "$raw" || true)
+  [ -f "$raw" ] && fails=$(grep -c '^FAIL ' "$raw" || true)
   [ -z "$fails" ] && fails=0
   if [ "$fails" -gt "$allow" ]; then
     echo "  !! $script 有 $fails 条 FAIL（允许 $allow），完整日志 $raw"
@@ -105,9 +105,11 @@ log "起临时实例（$IMAGE）"
 mkdir -p "$OUT"
 [ -d "$HERE/../frontend/node_modules/vitest" ] && {
   log "前端单元测试（vitest）"
+  # 用 ./node_modules/.bin/vitest 而不是 `npm run test`：npm 以 root 进容器时会把脚本
+  # 降到挂载目录的宿主 uid，而 virtiofs 只把写权限给了 root，mkdir node_modules/.vitest-daemon 直接 EACCES。
   podman run --rm --security-opt label=disable \
-    -v "$HERE/../frontend:/work" -w /work --entrypoint npm \
-    docker.io/library/node:22-alpine run test 2>&1 | tee "$OUT/unit.log" \
+    -v "$HERE/../frontend:/work" -w /work --entrypoint ./node_modules/.bin/vitest \
+    docker.io/library/node:22-alpine run 2>&1 | tee "$OUT/unit.log" \
     | grep -E 'Test Files|Tests  |FAIL' | sed 's/^/  /'
   grep -q 'Test Files.*failed' "$OUT/unit.log" && {
     echo "  !! 单元测试失败，完整日志 $OUT/unit.log"
@@ -154,6 +156,9 @@ run_suite mobile mobile-ui.mjs 3 -e BASE="http://$RO_IP"
 
 # 相似对比走独立样本实例，前面几个套件的改名/删除不会影响它
 run_suite similar similar.mjs 0 -e BASE="http://$SIM_IP"
+
+# 彩绘提醒：临时实例都不给 AIRFRAME_URL，验的是「没配数据源时怎么说」+ 关注表读写闭环
+run_suite livery livery.mjs 0 -e BASE="http://$RW_IP" -e RO_BASE="http://$RO_IP"
 
 log "结果"
 if [ -z "$FAILED" ]; then

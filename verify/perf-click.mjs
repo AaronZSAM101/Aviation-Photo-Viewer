@@ -25,7 +25,8 @@ page.on('request', (req) => {
 await page.goto(`${BASE}/`, { waitUntil: 'domcontentloaded' });
 await page.waitForFunction(() => document.querySelectorAll('.card').length > 0);
 await page.waitForFunction(() => !document.querySelector('#loading.show'));
-await page.waitForFunction((n) => document.querySelectorAll('.card').length >= n, { timeout: 120000 }, 2939);
+// 列表虚拟化后 DOM 里只有窗口内的卡片，等窗口挂载稳定即可
+await page.evaluate(() => new Promise((r) => setTimeout(r, 1200)));
 await new Promise((r) => setTimeout(r, 1500));
 
 await page.evaluate(() => {

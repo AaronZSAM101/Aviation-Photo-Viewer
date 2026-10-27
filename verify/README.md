@@ -53,7 +53,7 @@ podman rm -f pv-verify-manual   # parity 跑完不关浏览器，必须手动收
 
 ## 套件清单
 
-核心五件（`suite.sh` 覆盖）：
+核心六件（`suite.sh` 覆盖）：
 
 | 脚本 | 覆盖范围 | 预期 |
 | --- | --- | --- |
@@ -62,6 +62,17 @@ podman rm -f pv-verify-manual   # parity 跑完不关浏览器，必须手动收
 | `conflict-ui.mjs` | 分批应用遇到覆盖冲突时，界面指出源与目标，操作仍留在队列里 | 8/8 |
 | `mobile-ui.mjs` | 393×852 手机视口的溢出/遮挡量化 + 截图，只做浏览类操作 | 可写 30/30；只读 27/30（3 项是管理入口，按设计隐藏） |
 | `similar.mjs` | 相似对比：3903 上独立样本实例（`probe-manifest.txt` 的 14 张真实原图 + 4 个副本），断言模态框报出 ≥4 组 | 1/1 |
+| `livery.mjs` | 彩绘提醒：`/api/config`、`/api/livery/{watch,watch/delete,feed}` 的契约（含机场/日期输入的 400），关注表在界面里的增删与点机号跳搜索，窄屏「更多」里的入口 | 12/12 |
+
+`livery.mjs` 打的两个临时实例都**不配** `AIRFRAME_URL` / `LIVERY_FEED_URL`：排班数据源在别人家的机器上，验收套件既不能依赖它在线，也不该替相册去敲那个接口。所以这里断言的是「没配数据源时接口和界面怎么说」，真正连通数据源的那条路径靠后端的 `cargo test` 和手工 `prod-smoke` 覆盖。
+
+独立探针（自己起实例，不进 `suite.sh`）：
+
+| 脚本 | 覆盖范围 |
+| --- | --- |
+| `raw-probe.sh` | P2-4 RAW：用 exiftool 造三张合成 `.CR2`（带内嵌图 / 纯垃圾字节 / JPEG 改名），断言取内嵌图、422 不 500、按内容兜底解码三条分支；只监听 3905 |
+| `heights.mjs` | 列表窗口化（P2-5）：滚动时量 DOM 行数、占位高度与真实卡片高度是否一致 |
+| `launch-probe.mjs` | 拉起脚本的自检：容器起来后 `/api/config` 的版本与模式是否符合预期 |
 
 后端写路径的定向脚本（要自己起可写实例，`HOST_IP`/`PHOTOS_ROOT`/`WRITE_IP` 指过去）：
 | 脚本 | 覆盖范围 |
@@ -92,8 +103,8 @@ podman rm -f pv-verify-manual   # parity 跑完不关浏览器，必须手动收
 ## 这些脚本之外还有两层更快的检查
 
 ```bash
-cd backend && cargo test      # 后端纯逻辑，33 条
-cd frontend && npm test       # 前端 utils：分组/路径/分批状态/格式化，43 条
+cd backend && cargo test      # 后端纯逻辑，60 条（含彩绘分类、机号规整、拍摄点档案）
+cd frontend && npm test       # 前端 utils：分组/路径/分批状态/格式化/搜索/窗口化/拍摄点/彩绘，98 条
 ```
 
 `suite.sh` 会把前端单元测试放在最前面跑（装了 vitest 才跑，没装就跳过）。

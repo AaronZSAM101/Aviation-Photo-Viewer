@@ -38,6 +38,10 @@ async function step(name, fn) {
 const launch = async () =>
   puppeteer.launch({
     executablePath: process.env.CHROME_PATH || '/usr/bin/chromium-browser',
+    // 一次 CDP 调用要等的上限。列表窗口化那步要在页面里滚完全库（2900+ 张），
+    // 默认 180s 在冷缓存的实例上会超时，而且超时的 evaluate 并不会取消页面里
+    // 正在跑的滚动——后面的步骤会接着被这股滚动带歪，看起来像四个独立的失败。
+    protocolTimeout: 600000,
     args: ['--no-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--window-size=1600,1000'],
     defaultViewport: { width: 1600, height: 1000 },
   });
@@ -178,32 +182,55 @@ async function modalShowing(page, needle, timeout = 2500) {
   }
 }
 
+// 选中的下拉项靠真鼠标点，页面正忙（滚动窗口重排、缩略图落地）时第一下可能落在动画中途的
+// 浮层上而什么都没改。所以点完要回头看 Select 自己显示的文字，没生效就关掉重开再点一次。
 async function pickSelect(page, index, optionText) {
-  await clickBox(page, `document.querySelectorAll('.ant-select')[${index}]`, `select ${index}`);
-  const opened = await waitFor(page, () => {
-    const dd = document.querySelector('.ant-select-dropdown:not(.ant-select-dropdown-hidden)');
-    return !!dd && !!dd.querySelector('.ant-select-item-option');
-  }, 6000);
-  if (!opened) throw new Error(`dropdown for select ${index} did not open`);
-  const options = await page.evaluate(() =>
-    [...document.querySelectorAll('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option')]
-      .map((o) => o.textContent.trim())
-      .join('|'),
-  );
-  const found = await page.evaluate(
-    (needle) => {
-      const o = [...document.querySelectorAll('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option')]
-        .find((x) => x.textContent.replace(/\s+/g, '').includes(needle.replace(/\s+/g, '')));
-      if (!o) return null;
-      const r = o.getBoundingClientRect();
-      return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
-    },
-    optionText,
-  );
-  if (!found) throw new Error(`option "${optionText}" missing, have: ${options}`);
-  await page.mouse.click(found.x, found.y);
-  await sleep(250);
-  return optionText;
+  const shown = () =>
+    page.evaluate((idx) => {
+      const s = document.querySelectorAll('.ant-select')[idx];
+      if (!s) return '';
+      const item = s.querySelector('.ant-select-selection-item');
+      return (item ? item.textContent : s.textContent).replace(/\s+/g, '');
+    }, index);
+  const closeDropdown = async () => {
+    await page.keyboard.press('Escape');
+    await sleep(150);
+  };
+  let lastOptions = '';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (attempt > 0) await closeDropdown();
+    await clickBox(page, `document.querySelectorAll('.ant-select')[${index}]`, `select ${index}`);
+    const opened = await waitFor(page, () => {
+      const dd = document.querySelector('.ant-select-dropdown:not(.ant-select-dropdown-hidden)');
+      return !!dd && !!dd.querySelector('.ant-select-item-option');
+    }, 6000);
+    if (!opened) throw new Error(`dropdown for select ${index} did not open`);
+    const options = await page.evaluate(() =>
+      [...document.querySelectorAll('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option')]
+        .map((o) => o.textContent.trim())
+        .join('|'),
+    );
+    lastOptions = options;
+    const found = await page.evaluate(
+      (needle) => {
+        const o = [...document.querySelectorAll('.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option')]
+          .find((x) => x.textContent.replace(/\s+/g, '').includes(needle.replace(/\s+/g, '')));
+        if (!o) return null;
+        const r = o.getBoundingClientRect();
+        return { x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) };
+      },
+      optionText,
+    );
+    if (!found) throw new Error(`option "${optionText}" missing, have: ${options}`);
+    await page.mouse.click(found.x, found.y);
+    const want = norm(optionText);
+    const start = Date.now();
+    while (Date.now() - start < 4000) {
+      if (norm(await shown()).includes(want)) return optionText;
+      await sleep(200);
+    }
+  }
+  throw new Error(`select ${index} never showed "${optionText}" (last options: ${lastOptions})`);
 }
 
 const textFinder = (selector, needle) =>
@@ -284,10 +311,64 @@ await step('gallery renders real thumbs', async () => {
   log('gallery renders real thumbs', ok, ok ? '' : 'no thumbnail reached naturalWidth');
 });
 
-// 前端按帧分批挂载（首屏优先），这里等它补齐再断言总数
-await waitFor(page, () => document.querySelectorAll('.card').length === 2939, 30000).catch(() => {});
-const cards = await page.evaluate(() => document.querySelectorAll('.card').length);
-log('all 2939 cards rendered', cards === 2939, `cards=${cards}`);
+// 列表改成行级窗口后，DOM 里只保留视口附近那几十张卡片。
+// 契约相应地从“2939 张全部挂载”改成三条：窗口有界、从上到下滚一遍能碰到每一张、
+// 滚动条长度不随挂载伸缩（占位内边距算对了）。
+await step('gallery windows the list', async () => {
+  // 期望清单走 node 侧 HTTP：冷实例上 /api/photos 要几十秒，挂在浏览器协议里只会白白吃超时。
+  const expected = await fetch(`${READ}/api/photos`)
+    .then((r) => r.json())
+    .then((l) => l.map((p) => (p.folder ? `${p.folder}/${p.filename}` : p.filename)));
+  if (!Array.isArray(expected) || expected.length === 0) throw new Error('expected list is empty');
+
+  await page.evaluate(() => {
+    window.__sweep = { seen: new Set(), peak: 0, height0: 0, height1: 0 };
+    document.scrollingElement.scrollTop = 0;
+  });
+  await sleep(300);
+  // 一页一页地滚，每页一次短 evaluate。整场循环放进单个 evaluate 里会让这一步变成
+  // 一个长达数分钟的 CDP 调用，一旦超时页面还在继续滚，后面的步骤全被带歪。
+  const tick = () =>
+    page.evaluate(() => {
+      const s = window.__sweep;
+      const cards = document.querySelectorAll('.card[data-sp]');
+      s.peak = Math.max(s.peak, cards.length);
+      cards.forEach((c) => s.seen.add(c.getAttribute('data-sp')));
+      const sc = document.scrollingElement;
+      s.height1 = sc.scrollHeight;
+      return { bottom: sc.scrollTop + window.innerHeight >= sc.scrollHeight - 2 };
+    });
+  await page.evaluate(() => {
+    window.__sweep.height0 = document.scrollingElement.scrollHeight;
+  });
+  let reachedBottom = false;
+  for (let guard = 0; guard < 1200; guard += 1) {
+    await page.evaluate((px) => {
+      document.scrollingElement.scrollTop += px;
+    }, Math.max(200, Math.round(1000 * 0.6)));
+    await sleep(50);
+    const t = await tick();
+    if (t.bottom) {
+      reachedBottom = true;
+      break;
+    }
+  }
+  const sweep = await page.evaluate((all) => {
+    const s = window.__sweep;
+    document.scrollingElement.scrollTop = 0;
+    return { cards: s.seen.size, peak: s.peak, height0: s.height0, height1: s.height1, missing: all.filter((sp) => !s.seen.has(sp)).slice(0, 5) };
+  }, expected);
+  const bounded = sweep.peak > 0 && sweep.peak < 400;
+  const complete = reachedBottom && sweep.cards === expected.length && sweep.missing.length === 0;
+  const stable = Math.abs(sweep.height1 - sweep.height0) < 24;
+  log('gallery window stays bounded', bounded, `peak=${sweep.peak} of ${expected.length} cards`);
+  log(
+    'every photo reachable by scrolling',
+    complete,
+    `seen=${sweep.cards} bottom=${reachedBottom} missing=${sweep.missing.join(',')}`,
+  );
+  log('scrollbar length stable while windowing', stable, `${sweep.height0} → ${sweep.height1}`);
+});
 const stats = await statText(page);
 log('stats string', /2939 张.*2939 张含EXIF.*全部.*无时间分组/.test(stats || ''), stats);
 
