@@ -1,0 +1,52 @@
+/* 彩绘提醒：数据在别人家的排班站上，界面只管读和提醒，所以状态行要说清「这份是什么时候的」 */
+.livery-modal{max-width:880px;width:min(880px,calc(100vw - 24px))}
+.livery-controls{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px}
+.livery-airport{min-width:230px}
+.livery-day{min-width:120px}
+.livery-source{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto}
+.livery-status{font-size:12px;line-height:1.6;padding:8px 10px;border-radius:6px;border:1px solid var(--border2);background:var(--surface2);color:var(--muted);margin-bottom:10px}
+.livery-status.ok{border-color:var(--border2);color:var(--text)}
+.livery-status.warn{border-color:var(--accent2-strong);color:var(--accent2)}
+.livery-status.error{border-color:var(--danger-border);color:var(--danger)}
+.livery-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+.livery-chips button{background:var(--surface2);border:1px solid var(--border2);color:var(--muted);border-radius:4px;padding:4px 9px;font-size:11px;cursor:pointer}
+.livery-chips button:hover{color:var(--text);border-color:var(--accent)}
+.livery-chips button.active{color:var(--accent);border-color:var(--accent);background:var(--surface)}
+.livery-list{max-height:min(46vh,420px);overflow:auto;display:flex;flex-direction:column;gap:6px;padding-right:2px}
+.livery-row{display:grid;grid-template-columns:52px 46px minmax(0,1fr) 92px 72px auto;align-items:center;gap:8px;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:8px 10px}
+.livery-row.cancelled{opacity:.55}
+.livery-time{font-family:var(--mono);font-size:13px;color:var(--accent)}
+.livery-direction{font-size:10px;letter-spacing:.06em;text-align:center;border-radius:3px;padding:3px 0;border:1px solid var(--border2);color:var(--muted)}
+.livery-direction.arrival{color:var(--info);border-color:var(--info)}
+.livery-direction.departure{color:var(--accent2);border-color:var(--accent2)}
+.livery-main{min-width:0}
+.livery-name{font-size:12px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.livery-sub{font-family:var(--mono);font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.livery-reg{font-family:var(--mono);font-size:11px;color:var(--info);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.livery-tag{font-size:10px;color:var(--muted);border:1px solid var(--border2);border-radius:3px;padding:2px 6px;white-space:nowrap;text-align:center}
+.livery-tag.painted{color:var(--accent2);border-color:var(--accent2)}
+.livery-ops{display:flex;gap:6px}
+.livery-empty{font-size:12px;line-height:1.7;color:var(--muted);padding:10px 2px}
+.livery-watch{margin-top:14px;border-top:1px solid var(--border2);padding-top:12px}
+.livery-watch-head{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text);margin-bottom:8px}
+.livery-watch-row{display:grid;grid-template-columns:92px minmax(0,1fr) 56px auto;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--border)}
+.livery-watch-reg{background:none;border:none;color:var(--info);font-family:var(--mono);font-size:11px;cursor:pointer;padding:0;text-align:left}
+.livery-watch-reg:hover{text-decoration:underline}
+.livery-watch-name{min-width:0;font-size:12px;color:var(--text);display:flex;flex-direction:column}
+.livery-watch-name span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.livery-watch-name em{font-style:normal;font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.livery-watch-ops{display:flex;gap:6px}
+.livery-watch-form{display:flex;flex-direction:column;gap:6px;background:var(--surface2);border:1px solid var(--border2);border-radius:6px;padding:10px;margin-bottom:10px}
+.livery-watch-check{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}
+.livery-watch-form-ops{display:flex;justify-content:flex-end;gap:6px}
+@media (max-width:900px){
+  .livery-row{grid-template-columns:48px 40px minmax(0,1fr) auto;grid-template-areas:'time dir main ops' 'reg reg tag ops'}
+  .livery-time{grid-area:time}
+  .livery-direction{grid-area:dir}
+  .livery-main{grid-area:main}
+  .livery-reg{grid-area:reg}
+  .livery-tag{grid-area:tag}
+  .livery-ops{grid-area:ops;flex-direction:column}
+  .livery-airport{min-width:0;flex:1}
+  .livery-source{width:100%;margin-left:0}
+}

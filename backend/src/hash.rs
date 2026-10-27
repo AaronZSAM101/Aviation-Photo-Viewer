@@ -47,10 +47,11 @@ pub async fn hash_file(subpath: web::Path<String>, state: web::Data<AppState>) -
     let sha = hasher.finalize();
     let sha_hex = hex::encode(sha);
 
-    // 感知哈希：8x8 平均哈希 (aHash)
-    let img = match image::load_from_memory(&data) {
-        Ok(img) => img,
-        Err(_) => return HttpResponse::UnprocessableEntity().finish(),
+    // 感知哈希：8x8 平均哈希 (aHash)。RAW 要起 exiftool 取内嵌预览，别在事件循环线程上干
+    let img = match tokio::task::spawn_blocking(move || crate::decode::open_image(&path)).await {
+        Ok(Some(img)) => img,
+        Ok(None) => return HttpResponse::UnprocessableEntity().finish(),
+        Err(_) => return HttpResponse::InternalServerError().finish(),
     };
     let ph = compute_ahash(&img);
     let ph_hex = format!("{:016x}", ph);
@@ -103,13 +104,19 @@ pub async fn compare_photos(
     sha.update(&db);
     let sha_b = hex::encode(sha.finalize());
 
-    let img_a = match image::load_from_memory(&da) {
-        Ok(img) => img,
-        Err(_) => return HttpResponse::UnprocessableEntity().body("a unreadable"),
-    };
-    let img_b = match image::load_from_memory(&db) {
-        Ok(img) => img,
-        Err(_) => return HttpResponse::UnprocessableEntity().body("b unreadable"),
+    // RAW 要起 exiftool 取内嵌预览，两张一起放到阻塞线程里解码
+    let (img_a, img_b) = match tokio::task::spawn_blocking(move || {
+        (
+            crate::decode::open_image(&pa),
+            crate::decode::open_image(&pb),
+        )
+    })
+    .await
+    {
+        Ok((Some(a), Some(b))) => (a, b),
+        Ok((None, _)) => return HttpResponse::UnprocessableEntity().body("a unreadable"),
+        Ok((_, None)) => return HttpResponse::UnprocessableEntity().body("b unreadable"),
+        Err(_) => return HttpResponse::InternalServerError().finish(),
     };
     let hash_a = image_hash_from_image(&img_a);
     let hash_b = image_hash_from_image(&img_b);
@@ -412,8 +419,7 @@ fn compute_entry_hash(entry: &PhotoEntry, thumbs: &ThumbSnapshot) -> Option<Imag
         }
     }
 
-    image::open(&entry.path)
-        .ok()
+    crate::decode::open_image(&entry.path)
         .map(|img| image_hash_from_image(&img))
 }
 

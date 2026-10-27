@@ -74,6 +74,21 @@ pub fn legacy_exif_overrides(photos_dir: &Path) -> PathBuf {
     photos_dir.join(".photo_viewer_exif_overrides.json")
 }
 
+/// 图片文字识别出的机号（`.photo_viewer/reg_detect.json`）
+pub fn reg_detect(photos_dir: &Path) -> PathBuf {
+    state_dir(photos_dir).join("reg_detect.json")
+}
+
+/// 手写拍摄点档案（`.photo_viewer/spots.json`）：文件夹 → 坐标
+pub fn spots(photos_dir: &Path) -> PathBuf {
+    state_dir(photos_dir).join("spots.json")
+}
+
+/// 彩绘关注清单（`.photo_viewer/watchlist.json`）：机号 → 自己记的名字
+pub fn watchlist(photos_dir: &Path) -> PathBuf {
+    state_dir(photos_dir).join("watchlist.json")
+}
+
 pub fn preferred_existing(preferred: PathBuf, legacy: PathBuf) -> PathBuf {
     if preferred.exists() || !legacy.exists() {
         preferred

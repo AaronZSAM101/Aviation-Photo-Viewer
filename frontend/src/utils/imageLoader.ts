@@ -1,33 +1,50 @@
+interface QueueItem {
+  img: HTMLImageElement;
+  done: () => void;
+}
+
 class ImageLoader {
   private maxConcurrent: number;
-  private loading = 0;
-  private queue: { img: HTMLImageElement; done: () => void }[] = [];
-  private loadingSet = new Set<HTMLImageElement>();
+  private queue: QueueItem[] = [];
+  // 排队中的元素：可能已经被卸载，所以能取消
+  private queued = new Set<HTMLImageElement>();
+  // 已经挂上 src 的元素：浏览器正在下载，取消不了，只能等它结束
+  private running = new Set<HTMLImageElement>();
 
   constructor(maxConcurrent: number) {
     this.maxConcurrent = maxConcurrent;
   }
 
   load(img: HTMLImageElement, done: () => void = () => {}) {
-    if (this.loadingSet.has(img)) return;
-    this.loadingSet.add(img);
+    if (this.queued.has(img) || this.running.has(img)) return;
+    this.queued.add(img);
     this.queue.push({ img, done });
     this.processQueue();
   }
 
+  // 行级窗口下卡片会被滚出窗口就卸载，排在队里的下载没必要再发起：
+  // 快速划过整库时，不然会把带宽和 onload 全花在没人看的缩略图上。
+  cancel(img: HTMLImageElement) {
+    if (!this.queued.delete(img)) return;
+    this.queue = this.queue.filter((item) => item.img !== img);
+  }
+
   private processQueue() {
-    while (this.loading < this.maxConcurrent && this.queue.length > 0) {
+    while (this.running.size < this.maxConcurrent && this.queue.length > 0) {
       const item = this.queue.shift()!;
-      this.loading += 1;
-      const src = item.img.dataset.src;
+      this.queued.delete(item.img);
+      // 取消只覆盖还在排队的；这一遍再兜住"已经不在文档里"的
+      if (!item.img.isConnected) continue;
+      this.running.add(item.img);
       item.img.onload = item.img.onerror = () => {
         item.img.classList.add('loaded');
-        this.loading -= 1;
-        this.loadingSet.delete(item.img);
+        this.running.delete(item.img);
         item.done();
         this.processQueue();
       };
+      const src = item.img.dataset.src;
       if (src) item.img.src = src;
+      else this.running.delete(item.img);
     }
   }
 }
@@ -67,4 +84,5 @@ export function observeLazyImage(img: HTMLImageElement) {
 
 export function unobserveLazyImage(img: HTMLImageElement) {
   lazyObserver?.unobserve(img);
+  imageLoader.cancel(img);
 }

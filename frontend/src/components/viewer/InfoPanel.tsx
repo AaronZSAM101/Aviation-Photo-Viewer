@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { GpsMapSettings, Photo } from '../../types';
+import type { GpsMapSettings, Photo, Spot } from '../../types';
 import {
   formatGpsAltitude,
   formatGpsDateTime,
@@ -9,6 +9,7 @@ import {
   type GpsCoordMode,
 } from '../../utils/gps';
 import { fmtMegapixels, fmtSize, hasAnyExif } from '../../utils/format';
+import { formatSpot } from '../../utils/spot';
 import { GpsMapSection, type GpsMapState } from './GpsMapSection';
 
 interface InfoPanelProps {
@@ -21,12 +22,22 @@ interface InfoPanelProps {
   gpsMapState: GpsMapState;
   gpsCustomLength: number | null;
   coordModes: Record<'lat' | 'lon', GpsCoordMode>;
+  readOnly: boolean;
+  ocrAvailable: boolean;
+  regBusy: boolean;
+  regError: string | null;
+  spot: Spot | null;
+  spotBusy: boolean;
+  spotError: string | null;
   onGpsSettingsChange: (settings: GpsMapSettings) => void;
   onGpsMapStateChange: (updater: (state: GpsMapState) => GpsMapState) => void;
   onGpsCustomLengthChange: (value: number | null) => void;
   onToggleCoordMode: (type: 'lat' | 'lon') => void;
   onOpenLargeMap: () => void;
   onOpenMapSettings: () => void;
+  onRecognizeReg: () => void;
+  onEditSpot: () => void;
+  onApplySpot: () => void;
 }
 
 interface InfoRow {
@@ -40,6 +51,100 @@ interface InfoSection {
   rows: InfoRow[];
 }
 
+interface RegistrationCellProps {
+  photo: Photo;
+  readOnly: boolean;
+  ocrAvailable: boolean;
+  regBusy: boolean;
+  regError: string | null;
+  onRecognize: () => void;
+}
+
+/**
+ * 机号一格：文件名读得出的直接显示；读不出时允许就地做一次机身文字识别。
+ * 禁用原因写在 title 里，用户不必点下去才知道容器没装 tesseract。
+ * 文件名读得出机号时它以识别结果为准（后端就是这个口径），所以按钮照样能点，
+ * 只是点完显示的还是文件名下那个号。
+ */
+function RegistrationCell({
+  photo,
+  readOnly,
+  ocrAvailable,
+  regBusy,
+  regError,
+  onRecognize,
+}: RegistrationCellProps) {
+  const regs = photo.regs ?? [];
+  const source = photo.reg_source ?? 'none';
+  const origin = regs.length === 0 ? '未识别' : source === 'ocr' ? '机身文字识别' : '文件名读出';
+  const title = !ocrAvailable
+    ? '容器里没有 tesseract，只能用文件名里的机号'
+    : '识别机身文字里的机号';
+  return (
+    <span className="reg-cell">
+      <span className="reg-value">{regs.length > 0 ? regs.join(' / ') : '—'}</span>
+      <span className="reg-origin">{origin}</span>
+      {!readOnly && (
+        <button
+          type="button"
+          className="reg-pick"
+          disabled={regBusy || !ocrAvailable}
+          title={title}
+          onClick={onRecognize}
+        >
+          {regBusy ? '识别中…' : '识别'}
+        </button>
+      )}
+      {regError && <span className="reg-error">{regError}</span>}
+    </span>
+  );
+}
+
+/**
+ * 拍摄点一格：档案按文件夹记，所以这一格说的是「这张照片所在的点」，不是这张照片自己的坐标。
+ * 「补给这张」只在照片本来没坐标时出现——已经有 GPS 的话再盖一层只会把真值挡掉。
+ */
+function SpotCell({
+  spot,
+  photoHasGps,
+  readOnly,
+  spotBusy,
+  spotError,
+  onEdit,
+  onApply,
+}: {
+  spot: Spot | null;
+  photoHasGps: boolean;
+  readOnly: boolean;
+  spotBusy: boolean;
+  spotError: string | null;
+  onEdit: () => void;
+  onApply: () => void;
+}) {
+  return (
+    <span className="spot-cell">
+      <span className="spot-value">{spot ? formatSpot(spot) : '未记录'}</span>
+      {!readOnly && (
+        <button type="button" className="reg-pick" onClick={onEdit}>
+          {spot ? '编辑' : '记录'}
+        </button>
+      )}
+      {!readOnly && spot && !photoHasGps && (
+        <button
+          type="button"
+          className="reg-pick"
+          disabled={spotBusy}
+          title="把这个点的坐标补进这张照片的 EXIF 覆盖层，原图不动"
+          onClick={onApply}
+        >
+          {spotBusy ? '补写中…' : '补给这张'}
+        </button>
+      )}
+      {spotError && <span className="reg-error">{spotError}</span>}
+    </span>
+  );
+}
+
 export function InfoPanel({
   photo,
   rgbOn,
@@ -50,12 +155,22 @@ export function InfoPanel({
   gpsMapState,
   gpsCustomLength,
   coordModes,
+  readOnly,
+  ocrAvailable,
+  regBusy,
+  regError,
+  spot,
+  spotBusy,
+  spotError,
   onGpsSettingsChange,
   onGpsMapStateChange,
   onGpsCustomLengthChange,
   onToggleCoordMode,
   onOpenLargeMap,
   onOpenMapSettings,
+  onRecognizeReg,
+  onEditSpot,
+  onApplySpot,
 }: InfoPanelProps) {
   const e = photo.exif;
   const hasExif = hasAnyExif(e);
@@ -73,6 +188,21 @@ export function InfoPanel({
         e.image_width && e.image_height ? `${e.image_width} × ${e.image_height} px` : null,
     },
     { key: '像素总数', value: fmtMegapixels(e.image_width, e.image_height) },
+    { key: '机号', value: <RegistrationCell photo={photo} readOnly={readOnly} ocrAvailable={ocrAvailable} regBusy={regBusy} regError={regError} onRecognize={onRecognizeReg} /> },
+    {
+      key: '拍摄点',
+      value: (
+        <SpotCell
+          spot={spot}
+          photoHasGps={e.gps_lat != null && e.gps_lon != null}
+          readOnly={readOnly}
+          spotBusy={spotBusy}
+          spotError={spotError}
+          onEdit={onEditSpot}
+          onApply={onApplySpot}
+        />
+      ),
+    },
   ];
   sections.push({ title: '基本信息', rows: basicRows });
 

@@ -8,7 +8,8 @@
 .folder-section .folder-section{margin-bottom:20px}
 .folder-section .folder-section .folder-header{border-bottom-style:dashed}
 
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(175px,1fr));gap:10px}
+:root{--card-min:175px;--card-gap:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--card-min),1fr));gap:var(--card-gap)}
 
 .card{background:var(--surface);border:1px solid var(--border);border-radius:6px;overflow:hidden;cursor:pointer;transition:border-color .15s,transform .1s,box-shadow .15s;position:relative;box-shadow:var(--panel-glow)}
 .card:hover{border-color:var(--accent2);transform:translateY(-1px);box-shadow:0 0 0 1px var(--accent2-soft),0 12px 26px rgba(0,0,0,.20)}
@@ -24,6 +25,8 @@
 .badge.move{bottom:6px;right:6px;background:var(--accent2-strong);color:#fff;letter-spacing:.05em;z-index:6}
 .badge.exif{top:26px;right:6px;background:var(--accent2-strong);color:#fff;letter-spacing:.05em;z-index:6}
 .badge.num{bottom:6px;left:6px;color:var(--badge-num);opacity:.95}
+/* 机号压在 #序号 上方：这两个都在左下，缩略图再窄也只是叠出一列，不会横向撞到右下角的待处理标记 */
+.badge.reg{bottom:24px;left:6px;z-index:6;color:var(--accent);letter-spacing:.04em;max-width:calc(100% - 12px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .card-info{padding:7px 9px;border-top:1px solid var(--border);background:linear-gradient(180deg,rgba(255,255,255,.015),transparent)}
 .card-name{font-family:var(--mono);font-size:10px;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px}
 .card-date{font-family:var(--mono);font-size:10px;color:var(--muted)}
@@ -42,9 +45,3 @@
 .badge.staged{top:6px;right:6px;background:var(--danger-strong);color:var(--on-danger);letter-spacing:.05em;z-index:6}
 
 .badge.rename,.badge.move{max-width:calc(100% - 12px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-
-.folder-section,
-.card{
-  content-visibility:auto;
-  contain-intrinsic-size:260px;
-}

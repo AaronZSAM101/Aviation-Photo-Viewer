@@ -5,6 +5,7 @@ use std::{
 
 use crate::models::{PhotoEntry, ScanError};
 
+/// image 直接解得动的位图；相机 RAW 由 decode::RAW_EXTS 决定，走内嵌预览
 pub const SUPPORTED_EXTS: &[&str] = &["jpg", "jpeg", "png", "tiff", "tif", "webp"];
 
 /// 检查路径是否安全（必须是非空的相对路径，且不能包含父目录/根路径）
@@ -79,7 +80,7 @@ pub fn is_supported_image(path: &Path) -> bool {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_lowercase();
-    SUPPORTED_EXTS.contains(&ext.as_str())
+    SUPPORTED_EXTS.contains(&ext.as_str()) || crate::decode::is_raw(path)
 }
 
 pub fn metadata_mtime_key(metadata: &std::fs::Metadata) -> u64 {

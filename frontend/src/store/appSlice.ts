@@ -39,6 +39,10 @@ export interface LoadingPatch {
 export interface AppState extends BrowsePreferences {
   themeMode: ThemeMode;
   readOnly: boolean;
+  // 容器里有没有装 tesseract：决定信息面板的「识别机号」按钮能否点
+  ocrAvailable: boolean;
+  // 容器里有没有配排班数据源（AIRFRAME_URL / LIVERY_FEED_URL）：没配时彩绘提醒只能看关注表
+  liveryConfigured: boolean;
   version: string | null;
   versionSource: string | null;
   user: string | null;
@@ -146,6 +150,8 @@ const initialState: AppState = {
   ...initialBrowse,
   themeMode: readThemeMode(),
   readOnly: false,
+  ocrAvailable: false,
+  liveryConfigured: false,
   version: null,
   versionSource: null,
   user: null,
@@ -173,6 +179,8 @@ const appSlice = createSlice({
     applyConfig: (state, action: PayloadAction<AppConfig>) => {
       const config = action.payload;
       state.readOnly = !!config.readOnly;
+      state.ocrAvailable = !!config.ocrAvailable;
+      state.liveryConfigured = !!config.liveryConfigured;
       state.version = config.version || null;
       state.versionSource = config.versionSource || null;
       state.user = config.user || null;

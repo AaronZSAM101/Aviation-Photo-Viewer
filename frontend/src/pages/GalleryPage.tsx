@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { App as AntdApp } from 'antd';
 import type { MouseEvent } from 'react';
 import { PhotosApi } from '../api/photos';
+import { SpotsApi } from '../api/spots';
 import { StageApi } from '../api/stage';
 import { AppHeader } from '../components/AppHeader';
 import { CardContextMenu } from '../components/CardContextMenu';
@@ -11,6 +12,7 @@ import { BulkMoveModal } from '../components/modals/BulkMoveModal';
 import { CompareModal } from '../components/modals/CompareModal';
 import { ExifEditModal } from '../components/modals/ExifEditModal';
 import { FileOpModal } from '../components/modals/FileOpModal';
+import { LiveryModal } from '../components/modals/LiveryModal';
 import { SetDirModal } from '../components/modals/SetDirModal';
 import { ShortcutsModal } from '../components/modals/ShortcutsModal';
 import { StagedModal } from '../components/modals/StagedModal';
@@ -25,12 +27,14 @@ import {
   setLoading,
   setSort,
 } from '../store/appSlice';
-import { setPhotos, setSelection, setStagedOps } from '../store/photosSlice';
+import { setPhotos, setSelection, setSpots, setStagedOps } from '../store/photosSlice';
+import { refreshLiveryFeed } from '../store/liverySlice';
 import type { GalleryCardEntry, OpKind, Photo, SortKey } from '../types';
 import { errorText } from '../utils/errors';
 import { hasAnyExif } from '../utils/format';
 import { buildSections, collectSectionKeys } from '../utils/grouping';
 import { decodeViewerPath, encodePath, subpath } from '../utils/paths';
+import { filterPhotos } from '../utils/search';
 import { stagedSets } from '../utils/staged';
 
 interface CardMenuState {
@@ -63,18 +67,6 @@ const SCALE_LABEL: Record<string, string> = {
   day: '按日',
 };
 
-function filterPhotos(photos: Photo[], term: string): Photo[] {
-  const trimmed = term.trim();
-  if (!trimmed) return photos;
-  const lower = trimmed.toLowerCase();
-  return photos.filter((photo) => {
-    const filename = photo.filename.toLowerCase();
-    const folder = (photo.folder || '').toLowerCase();
-    const fullpath = subpath(photo).toLowerCase();
-    return filename.includes(lower) || folder.includes(lower) || fullpath.includes(lower);
-  });
-}
-
 function writeStateParam(params: URLSearchParams, key: string, value: string, fallback: string) {
   if (!value || value === fallback) params.delete(key);
   else params.set(key, value);
@@ -102,6 +94,12 @@ export function GalleryPage() {
   const collapsedSections = useAppSelector((state) => state.app.collapsedSections);
   const expandedSections = useAppSelector((state) => state.app.expandedSections);
   const readOnly = useAppSelector((state) => state.app.readOnly);
+  const liveryConfigured = useAppSelector((state) => state.app.liveryConfigured);
+  const liveryAirport = useAppSelector((state) => state.livery.airport);
+  const liveryDayOffset = useAppSelector((state) => state.livery.dayOffset);
+  const liveryCount = useAppSelector((state) => state.livery.feed?.alerts.length ?? 0);
+  const liveryLoading = useAppSelector((state) => state.livery.loading);
+  const liveryAttempted = useAppSelector((state) => state.livery.attempted);
 
   const [searchValue, setSearchValue] = useState(searchTerm);
   const [viewerSp, setViewerSp] = useState<string | null>(null);
@@ -112,6 +110,7 @@ export function GalleryPage() {
   const [stagedOpen, setStagedOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [liveryOpen, setLiveryOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [bulkMoveOpen, setBulkMoveOpen] = useState(false);
   const [setDirOpen, setSetDirOpen] = useState(false);
@@ -182,6 +181,15 @@ export function GalleryPage() {
     }
   }, [dispatch]);
 
+  // 拍摄点档案读不到不影响照片列表（老镜像根本没这个接口），当成空档案就行
+  const refreshSpots = useCallback(async () => {
+    try {
+      dispatch(setSpots(await SpotsApi.list()));
+    } catch {
+      dispatch(setSpots({}));
+    }
+  }, [dispatch]);
+
   const loadPhotos = useCallback(
     async (sortOverride?: SortKey): Promise<Photo[]> => {
       const sort = sortOverride ?? sortRef.current;
@@ -192,6 +200,7 @@ export function GalleryPage() {
         const [result] = await Promise.all([
           PhotosApi.getPhotos(sort),
           refreshStaged(),
+          refreshSpots(),
         ]);
         list = result.photos;
         if (seq !== loadSeqRef.current) return [];
@@ -220,7 +229,7 @@ export function GalleryPage() {
       if (seq === loadSeqRef.current) hideLoadingLater(300);
       return list;
     },
-    [dispatch, hideLoadingLater, message, refreshStaged],
+    [dispatch, hideLoadingLater, message, refreshSpots, refreshStaged],
   );
 
   useEffect(() => {
@@ -270,6 +279,12 @@ export function GalleryPage() {
     }, 120);
     return () => window.clearTimeout(timer);
   }, [searchValue, searchTerm, dispatch]);
+
+  // ── 彩绘提醒徽章：一次会话自动拉一遍，之后只在弹窗里手动刷 ──────────────────
+  useEffect(() => {
+    if (!liveryConfigured || liveryAttempted || liveryLoading) return;
+    void refreshLiveryFeed(dispatch, { airport: liveryAirport, dayOffset: liveryDayOffset });
+  }, [dispatch, liveryAirport, liveryDayOffset, liveryAttempted, liveryConfigured, liveryLoading]);
 
   // ── URL 同步 ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -626,6 +641,7 @@ export function GalleryPage() {
     stagedOpen ||
     trashOpen ||
     compareOpen ||
+    liveryOpen ||
     shortcutsOpen ||
     bulkMoveOpen ||
     setDirOpen ||
@@ -646,6 +662,8 @@ export function GalleryPage() {
           onOpenStaged={() => setStagedOpen(true)}
           onOpenTrash={() => setTrashOpen(true)}
           onOpenCompare={() => setCompareOpen(true)}
+          onOpenLivery={() => setLiveryOpen(true)}
+          liveryCount={liveryCount}
           onOpenShortcuts={() => setShortcutsOpen(true)}
           onOpenSetDir={() => void openSetDir()}
           onBulkDelete={() => void handleBulkDelete()}
@@ -736,6 +754,12 @@ export function GalleryPage() {
         photos={photos}
         selected={selected}
         onClose={() => setCompareOpen(false)}
+      />
+
+      <LiveryModal
+        open={liveryOpen}
+        onClose={() => setLiveryOpen(false)}
+        onSearchRegistration={(registration) => setSearchValue(registration)}
       />
 
       <ShortcutsModal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />

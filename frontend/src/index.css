@@ -2,6 +2,7 @@
 @import url('./styles/gallery.css');
 @import url('./styles/viewer.css');
 @import url('./styles/compare.css');
+@import url('./styles/livery.css');
 @import url('./styles/responsive.css');
 
 #root {

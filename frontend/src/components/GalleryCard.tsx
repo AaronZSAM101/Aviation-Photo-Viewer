@@ -82,6 +82,11 @@ function GalleryCardInner({
     fmtSize(photo.size),
   ].filter(Boolean);
 
+  // 机号浮在缩略图角上而不是卡片信息区：加一行会把所有卡片（包括没有机号的）都撑高，
+  // 窗口化算的行高也跟着变。
+  const regs = photo.regs ?? [];
+  const regFromOcr = photo.reg_source === 'ocr';
+
   return (
     <div
       className={className}
@@ -128,6 +133,14 @@ function GalleryCardInner({
         )}
         {hasExifOp && (
           <span className="badge exif" title="待写入 EXIF">待EXIF</span>
+        )}
+        {regs.length > 0 && (
+          <span
+            className="badge reg"
+            title={`机号（${regFromOcr ? '机身文字识别' : '文件名'}）：${regs.join('、')}`}
+          >
+            {regs.slice(0, 2).join(' ')}
+          </span>
         )}
         <span className="badge num">#{number}</span>
       </div>

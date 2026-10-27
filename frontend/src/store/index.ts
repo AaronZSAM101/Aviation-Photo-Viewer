@@ -1,12 +1,14 @@
 import { configureStore } from '@reduxjs/toolkit';
 import { useDispatch, useSelector } from 'react-redux';
 import appReducer from './appSlice';
+import liveryReducer from './liverySlice';
 import photosReducer from './photosSlice';
 
 export const store = configureStore({
   reducer: {
     app: appReducer,
     photos: photosReducer,
+    livery: liveryReducer,
   },
 });
 

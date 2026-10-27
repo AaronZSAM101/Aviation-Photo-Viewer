@@ -1,12 +1,7 @@
-import { memo, useEffect, useState, type MouseEvent } from 'react';
+import { memo, type MouseEvent } from 'react';
 import type { GalleryCardEntry, GallerySection as GallerySectionType } from '../types';
 import type { StagedSets } from '../utils/staged';
-import { GalleryCard } from './GalleryCard';
-
-// 上千张卡片一次性挂载会把主线程堵住 1s 以上，先渲染首屏，再按帧补齐
-const INITIAL_CARDS = 240;
-const CARD_CHUNK = 240;
-const CHUNK_DELAY_MS = 30;
+import { GalleryGrid } from './GalleryGrid';
 
 interface GallerySectionProps {
   section: GallerySectionType;
@@ -32,43 +27,17 @@ function GallerySectionInner({
   onContextMenu,
 }: GallerySectionProps) {
   const collapsed = section.key ? isCollapsed(section.key) : false;
-  const [visible, setVisible] = useState(INITIAL_CARDS);
-  const [lastSection, setLastSection] = useState(section);
-
-  if (lastSection !== section) {
-    setLastSection(section);
-    setVisible(INITIAL_CARDS);
-  }
-
-  useEffect(() => {
-    if (visible >= section.items.length) return;
-    const timer = window.setTimeout(() => setVisible((count) => count + CARD_CHUNK), CHUNK_DELAY_MS);
-    return () => window.clearTimeout(timer);
-  }, [visible, section.items.length]);
-
-  const shown =
-    visible >= section.items.length ? section.items : section.items.slice(0, visible);
 
   const grid = (
-    <div className="grid">
-      {shown.map((entry) => {
-        const key = entry.photo.folder
-          ? `${entry.photo.folder}/${entry.photo.filename}`
-          : entry.photo.filename;
-        return (
-          <GalleryCard
-            key={key}
-            entry={entry}
-            number={numbering.get(key) || entry.index + 1}
-            selected={selected.has(key)}
-            staged={staged}
-            onCardClick={onCardClick}
-            onToggleCheck={onToggleCheck}
-            onContextMenu={onContextMenu}
-          />
-        );
-      })}
-    </div>
+    <GalleryGrid
+      items={section.items}
+      numbering={numbering}
+      selected={selected}
+      staged={staged}
+      onCardClick={onCardClick}
+      onToggleCheck={onToggleCheck}
+      onContextMenu={onContextMenu}
+    />
   );
 
   if (!section.key) return grid;

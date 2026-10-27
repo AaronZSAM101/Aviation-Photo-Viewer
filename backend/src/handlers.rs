@@ -114,7 +114,7 @@ use std::sync::atomic::Ordering;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 把路径检查的失败映射为 API 状态码：语法错误 400，保留目录/符号链接 403，不存在 404。
-fn path_error_response(error: PathError) -> HttpResponse {
+pub(crate) fn path_error_response(error: PathError) -> HttpResponse {
     match error {
         PathError::Invalid => HttpResponse::BadRequest().finish(),
         PathError::Denied => HttpResponse::Forbidden().finish(),
@@ -281,6 +281,10 @@ pub async fn app_config(state: web::Data<AppState>, req: HttpRequest) -> HttpRes
         "versionSource": env!("PHOTO_VIEWER_VERSION_SOURCE"),
         "user": user,
         "email": email,
+        // 前端据此决定「识别机号」按钮是灰的还是能点的，而不是等用户点下去才收到 503
+        "ocrAvailable": crate::registration::ocr_available(),
+        // 彩绘提醒有没有配数据源（AIRFRAME_URL / LIVERY_FEED_URL）；没配就只有关注清单
+        "liveryConfigured": crate::livery::feed_configured(),
     }))
 }
 
@@ -477,6 +481,11 @@ pub async fn list_photos(q: web::Query<PhotosQuery>, state: web::Data<AppState>)
         let guard = state.exif_overrides.read().await;
         guard.clone()
     };
+    // 图片文字识别出来的机号：文件名读不出时才用得上
+    let reg_detect = {
+        let guard = state.reg_detect.read().await;
+        guard.clone()
+    };
 
     // 步骤2：分离缓存命中和需要提取的条目
     // 缓存key = subpath; 当 (mtime, size) 改变时失效。
@@ -645,6 +654,19 @@ pub async fn list_photos(q: web::Query<PhotosQuery>, state: web::Data<AppState>)
                 apply_exif_override(&mut exif, override_exif);
             }
             let sort_key = crate::exif::date_to_sort_key(exif.date_taken.as_deref());
+            // 文件名优先：文件名里明写的机号是作者自己标的，识别结果只补空缺，
+            // 而且只对同一个文件版本（mtime+size）生效，改过图就不会拿老结果
+            let name_regs = crate::registration::from_filename(&e.filename);
+            let (regs, reg_source) = if name_regs.is_empty() {
+                match reg_detect.get(&e.subpath) {
+                    Some(d) if d.mtime == e.mtime && d.size == e.size && !d.regs.is_empty() => {
+                        (d.regs.clone(), "ocr")
+                    }
+                    _ => (Vec::new(), "none"),
+                }
+            } else {
+                (name_regs, "name")
+            };
             PhotoMeta {
                 filename: e.filename,
                 folder: e.folder,
@@ -652,6 +674,8 @@ pub async fn list_photos(q: web::Query<PhotosQuery>, state: web::Data<AppState>)
                 mtime: e.mtime,
                 exif,
                 date_sort_key: sort_key,
+                regs,
+                reg_source,
             }
         })
         .collect();
@@ -684,6 +708,82 @@ pub async fn list_photos(q: web::Query<PhotosQuery>, state: web::Data<AppState>)
 pub async fn scan_status(state: web::Data<AppState>) -> HttpResponse {
     let status = state.last_scan.read().await.clone();
     HttpResponse::Ok().json(status)
+}
+
+#[derive(serde::Deserialize)]
+pub struct OcrRegRequest {
+    pub path: String,
+}
+
+/// 对单张照片做机身文字识别。装了 tesseract 才有；结果按文件版本存进
+/// `.photo_viewer/reg_detect.json`，只在文件名读不出机号时补进列表。
+pub async fn ocr_photo_reg(req: web::Json<OcrRegRequest>, state: web::Data<AppState>) -> HttpResponse {
+    if state.read_only {
+        return HttpResponse::Forbidden().body("read-only mode enabled");
+    }
+    if !crate::registration::ocr_available() {
+        return HttpResponse::ServiceUnavailable().json(serde_json::json!({
+            "error": "no-ocr",
+            "message": "容器里没有 tesseract，装不了就用文件名里的机号",
+        }));
+    }
+    let rel = req.path.trim().trim_start_matches('/').to_string();
+    let (photos_dir, generation) = {
+        let pd = state.photos_dir.read().await;
+        (pd.clone(), state.dir_generation.load(Ordering::SeqCst))
+    };
+    let path = match crate::paths::resolve_user_file(&photos_dir, &rel).await {
+        Ok(path) => path,
+        Err(error) => return path_error_response(error),
+    };
+    let metadata = match fs::metadata(&path).await {
+        Ok(m) => m,
+        Err(_) => return HttpResponse::NotFound().body("file not found"),
+    };
+    let mtime = metadata_mtime_key(&metadata);
+    let size = metadata.len();
+    let file_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+    let outcome = tokio::task::spawn_blocking(move || crate::registration::ocr_file(&path)).await;
+    let regs = match outcome {
+        Ok(Ok(regs)) => regs,
+        Ok(Err(message)) => {
+            return HttpResponse::UnprocessableEntity()
+                .json(serde_json::json!({"error": "ocr-failed", "message": message}))
+        }
+        Err(_) => return HttpResponse::InternalServerError().body("识别任务崩了"),
+    };
+    {
+        let mut guard = state.reg_detect.write().await;
+        guard.insert(
+            rel.clone(),
+            crate::models::DetectedReg {
+                mtime,
+                size,
+                regs: regs.clone(),
+                engine: "tesseract".to_string(),
+            },
+        );
+    }
+    // 目录已切换就别把老库的识别结果写进新库的状态文件
+    if state.dir_generation.load(Ordering::SeqCst) == generation {
+        let snapshot = state.reg_detect.read().await.clone();
+        if let Err(e) =
+            crate::registration::persist_detect(&crate::cache_paths::reg_detect(&photos_dir), &snapshot)
+                .await
+        {
+            tracing::warn!("机号识别结果落盘失败：{}", e);
+        }
+    }
+    HttpResponse::Ok().json(serde_json::json!({
+        "path": rel,
+        "regs": regs,
+        "name_regs": crate::registration::from_filename(&file_name),
+        "engine": "tesseract",
+    }))
 }
 
 pub async fn list_folders(state: web::Data<AppState>) -> HttpResponse {
@@ -805,7 +905,7 @@ pub async fn serve_thumb(
     }
 
     let thumb_data = match tokio::task::spawn_blocking(move || -> Result<Vec<u8>, ()> {
-        let img = image::open(&path).map_err(|_| ())?;
+        let img = crate::decode::open_image(&path).ok_or(())?;
         let thumb = img.thumbnail(400, 400);
         let mut buf = Vec::new();
         thumb
@@ -878,17 +978,20 @@ pub async fn serve_preview(subpath: web::Path<String>, state: web::Data<AppState
     }
 
     let result = match tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String), ()> {
-        // 廉价的头部探测：当图片已经足够小时避免完整解码
-        if let Ok((w, h)) = image::image_dimensions(&path) {
-            if w <= PREVIEW_MAX && h <= PREVIEW_MAX {
-                let data = std::fs::read(&path).map_err(|_| ())?;
-                let mime = mime_guess::from_path(&path)
-                    .first_or_octet_stream()
-                    .to_string();
-                return Ok((data, mime));
+        // RAW 的原始字节浏览器画不出来，只能走解码出来的内嵌预览，跳过头部探测
+        if !crate::decode::is_raw(&path) {
+            // 廉价的头部探测：当图片已经足够小时避免完整解码
+            if let Ok((w, h)) = image::image_dimensions(&path) {
+                if w <= PREVIEW_MAX && h <= PREVIEW_MAX {
+                    let data = std::fs::read(&path).map_err(|_| ())?;
+                    let mime = mime_guess::from_path(&path)
+                        .first_or_octet_stream()
+                        .to_string();
+                    return Ok((data, mime));
+                }
             }
         }
-        let img = image::open(&path).map_err(|_| ())?;
+        let img = crate::decode::open_image(&path).ok_or(())?;
         let preview = img.thumbnail(PREVIEW_MAX, PREVIEW_MAX);
         let mut buf = Vec::new();
         preview
@@ -979,6 +1082,28 @@ pub async fn set_photos_dir(
     {
         let mut g = state.exif_overrides.write().await;
         *g = overrides;
+    }
+
+    // 机号识别结果跟着库走：新库没有 reg_detect.json 时 load_detect 返回空表，正好把旧库的清掉
+    let detected =
+        crate::registration::load_detect(&cache_paths::reg_detect(&p)).await;
+    {
+        let mut g = state.reg_detect.write().await;
+        *g = detected;
+    }
+
+    // 拍摄点档案同理按库分开：换库就换一份文件夹→坐标的表
+    let archive = crate::spots::load_spots(&cache_paths::spots(&p)).await;
+    {
+        let mut g = state.spots.write().await;
+        *g = archive;
+    }
+
+    // 彩绘关注清单也是手写的，跟着库走
+    let watched = crate::livery::load_watchlist(&cache_paths::watchlist(&p)).await;
+    {
+        let mut g = state.livery_watch.write().await;
+        *g = watched;
     }
 
     HttpResponse::Ok().json(serde_json::json!({"ok": true, "path": path}))

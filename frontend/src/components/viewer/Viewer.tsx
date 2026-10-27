@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { App as AntdApp, Modal } from 'antd';
 import { PhotosApi } from '../../api/photos';
+import { SpotsApi } from '../../api/spots';
 import { StageApi } from '../../api/stage';
 import { useAppDispatch, useAppSelector } from '../../store';
 import {
@@ -14,8 +15,15 @@ import {
   setGpsSettings,
   setZoomMode,
 } from '../../store/appSlice';
-import { setLens, setStagedOps } from '../../store/photosSlice';
-import type { OpKind, Photo, ZoomMode } from '../../types';
+import {
+  dropSpot,
+  patchPhotoExif,
+  putSpot,
+  setLens,
+  setRegs,
+  setStagedOps,
+} from '../../store/photosSlice';
+import type { OpKind, Photo, Spot, ZoomMode } from '../../types';
 import { errorText } from '../../utils/errors';
 import {
   type GpsCoordMode,
@@ -23,10 +31,12 @@ import {
 } from '../../utils/gps';
 import { buildAreaPath, computeHistograms, peakOf } from '../../utils/histogram';
 import { photoUrl, subpath } from '../../utils/paths';
+import { folderSpot, gpsFromSpotExif, spotKey } from '../../utils/spot';
 import { stagedSets } from '../../utils/staged';
 import { GpsMapSection, type GpsMapState } from './GpsMapSection';
 import { InfoPanel } from './InfoPanel';
 import { MapSettingsModal } from './MapSettingsModal';
+import { SpotEditorModal } from './SpotEditorModal';
 
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 8;
@@ -70,13 +80,16 @@ export function Viewer({
   const dispatch = useAppDispatch();
   const { message } = AntdApp.useApp();
   const readOnly = useAppSelector((state) => state.app.readOnly);
+  const ocrAvailable = useAppSelector((state) => state.app.ocrAvailable);
   const zoomModePref = useAppSelector((state) => state.app.zoomMode);
   const gpsSettings = useAppSelector((state) => state.app.gpsSettings);
   const gpsCustomLength = useAppSelector((state) => state.app.gpsCustomAircraftLength);
   const stagedOps = useAppSelector((state) => state.photos.stagedOps);
+  const spots = useAppSelector((state) => state.photos.spots);
 
   const currentPhoto = index != null ? photos[index] ?? null : null;
   const currentSp = currentPhoto ? subpath(currentPhoto) : '';
+  const spotArchive = currentPhoto ? folderSpot(spots, currentPhoto.folder) : null;
   const staged = stagedSets(stagedOps);
   const isStaged = !!currentSp && staged.deletes.has(currentSp);
 
@@ -118,6 +131,11 @@ export function Viewer({
   });
   const [mapSettingsOpen, setMapSettingsOpen] = useState(false);
   const [largeMapOpen, setLargeMapOpen] = useState(false);
+  const [regBusy, setRegBusy] = useState(false);
+  const [regError, setRegError] = useState<string | null>(null);
+  const [spotOpen, setSpotOpen] = useState(false);
+  const [spotBusy, setSpotBusy] = useState(false);
+  const [spotError, setSpotError] = useState<string | null>(null);
 
   currentSpRef.current = currentSp;
 
@@ -353,6 +371,91 @@ export function Viewer({
       cancelled = true;
     };
   }, [open, currentSp, currentPhoto, dispatch]);
+
+  // 换一张照片就把上一张的失败提示清掉，不然它会挂在无关的那张下面
+  useEffect(() => {
+    setRegError(null);
+    setSpotError(null);
+  }, [currentSp]);
+
+  const handleRecognizeReg = useCallback(() => {
+    if (!currentPhoto || regBusy) return;
+    const sp = currentSp;
+    setRegBusy(true);
+    setRegError(null);
+    PhotosApi.ocrRegistration(sp)
+      .then((data) => {
+        // 文件名读得出机号时后端以文件名为准，前端跟着同一个口径回写
+        const fromName = (data.name_regs?.length ?? 0) > 0;
+        dispatch(
+          setRegs({
+            subpath: sp,
+            regs: fromName ? (data.name_regs ?? []) : data.regs,
+            source: fromName ? 'name' : 'ocr',
+          }),
+        );
+        if (!fromName && data.regs.length === 0 && currentSpRef.current === sp) {
+          message.info('机身文字里没读出机号');
+        }
+      })
+      .catch((error) => {
+        if (currentSpRef.current === sp) setRegError(errorText(error, '识别失败'));
+      })
+      .finally(() => setRegBusy(false));
+  }, [currentPhoto, currentSp, dispatch, message, regBusy]);
+
+  // 档案是「这个文件夹」的属性，不是这张照片的，所以保存/删除只碰档案表
+  const handleSaveSpot = useCallback(
+    async (spot: Spot) => {
+      if (!currentPhoto || spotBusy) return;
+      const folder = spotKey(currentPhoto.folder);
+      setSpotBusy(true);
+      try {
+        await SpotsApi.save({ folder, ...spot });
+        dispatch(putSpot({ folder, spot }));
+        setSpotOpen(false);
+        message.success(`已记下「${spot.name}」`);
+      } catch (error) {
+        message.error(errorText(error, '档案保存失败'));
+      } finally {
+        setSpotBusy(false);
+      }
+    },
+    [currentPhoto, dispatch, message, spotBusy],
+  );
+
+  const handleDeleteSpot = useCallback(async () => {
+    if (!currentPhoto || spotBusy) return;
+    const folder = spotKey(currentPhoto.folder);
+    setSpotBusy(true);
+    try {
+      await SpotsApi.remove(folder);
+      dispatch(dropSpot(folder));
+      setSpotOpen(false);
+      message.success('档案已删除');
+    } catch (error) {
+      message.error(errorText(error, '档案删除失败'));
+    } finally {
+      setSpotBusy(false);
+    }
+  }, [currentPhoto, dispatch, message, spotBusy]);
+
+  const handleApplySpot = useCallback(() => {
+    if (!currentPhoto || spotBusy) return;
+    const sp = currentSp;
+    setSpotBusy(true);
+    setSpotError(null);
+    SpotsApi.apply(sp)
+      .then((data) => {
+        // 后端只回 GPS 四件套，其余 EXIF 保持本机读出来的样子
+        dispatch(patchPhotoExif({ subpath: sp, patch: gpsFromSpotExif(data.exif) }));
+        message.success('坐标已补进这张照片的覆盖层，原图没动');
+      })
+      .catch((error) => {
+        if (currentSpRef.current === sp) setSpotError(errorText(error, '补写失败'));
+      })
+      .finally(() => setSpotBusy(false));
+  }, [currentPhoto, currentSp, dispatch, message, spotBusy]);
 
   const handleToggleEqualize = () => {
     if (!equalizeRef.current) {
@@ -836,6 +939,13 @@ export function Viewer({
                   gpsMapState={effectiveMapState}
                   gpsCustomLength={gpsCustomLength}
                   coordModes={coordModes}
+                  readOnly={readOnly}
+                  ocrAvailable={ocrAvailable}
+                  regBusy={regBusy}
+                  regError={regError}
+                  spot={spotArchive}
+                  spotBusy={spotBusy}
+                  spotError={spotError}
                   onGpsSettingsChange={(next) => dispatch(setGpsSettings(next))}
                   onGpsMapStateChange={(updater) => setMapState(updater)}
                   onGpsCustomLengthChange={(value) =>
@@ -849,6 +959,9 @@ export function Viewer({
                   }
                   onOpenLargeMap={() => setLargeMapOpen(true)}
                   onOpenMapSettings={() => setMapSettingsOpen(true)}
+                  onRecognizeReg={handleRecognizeReg}
+                  onEditSpot={() => setSpotOpen(true)}
+                  onApplySpot={handleApplySpot}
                 />
               </div>
             </div>
@@ -863,6 +976,16 @@ export function Viewer({
             settings={gpsSettings}
             onClose={() => setMapSettingsOpen(false)}
             onChange={(next) => dispatch(setGpsSettings(next))}
+          />
+          <SpotEditorModal
+            open={spotOpen}
+            folder={currentPhoto.folder}
+            spot={spotArchive}
+            photoExif={currentPhoto.exif}
+            archive={spots}
+            onClose={() => setSpotOpen(false)}
+            onSave={handleSaveSpot}
+            onDelete={handleDeleteSpot}
           />
           <Modal
             open={largeMapOpen}

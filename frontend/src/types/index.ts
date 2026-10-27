@@ -34,6 +34,17 @@ export interface Photo {
   mtime: number;
   exif: ExifData;
   date_sort_key: number;
+  // 机号：后端从文件名读出，文件名读不出时才回落到机身文字识别的结果
+  regs?: string[];
+  reg_source?: 'name' | 'ocr' | 'none';
+}
+
+// 拍摄点档案：老照片没写 GPS，坐标由人按文件夹补一次（后端 spots.json）
+export interface Spot {
+  name: string;
+  lat: number;
+  lon: number;
+  note?: string;
 }
 
 export type SortKey = 'date-asc' | 'date-desc' | 'name-asc' | 'name-desc' | 'size-desc';
@@ -51,6 +62,8 @@ export interface BrowsePreferences {
 
 export interface AppConfig {
   readOnly?: boolean;
+  ocrAvailable?: boolean;
+  liveryConfigured?: boolean;
   version?: string | null;
   versionSource?: string | null;
   user?: string | null;
@@ -58,6 +71,41 @@ export interface AppConfig {
 }
 
 export type OpKind = 'delete' | 'move' | 'copy' | 'rename' | 'restore' | 'exif';
+
+// 彩绘关注清单：机号 → 自己记的名字（后端 watchlist.json）
+export interface WatchItem {
+  registration: string;
+  name: string;
+  note?: string;
+  documented: boolean;
+}
+
+// 提醒里的一条航班：数据源给的原始信息 + 后端按规则判出来的类别
+export interface LiveryAlert {
+  flightNumber: string;
+  registration: string | null;
+  model: string;
+  airline: string;
+  origin: string;
+  destination: string;
+  direction: 'arrival' | 'departure';
+  scheduledAt: string | null;
+  status: string;
+  source: string;
+  name: string;
+  category: string;
+  providerTarget?: string | null;
+}
+
+export interface LiveryFeed {
+  state: 'ok' | 'empty' | 'stale' | 'error' | 'unconfigured';
+  message: string;
+  alerts: LiveryAlert[];
+  totalFlights: number;
+  feedSource: string;
+  retrievedAt: number;
+  stale: boolean;
+}
 
 export interface StagedOp {
   id: string;

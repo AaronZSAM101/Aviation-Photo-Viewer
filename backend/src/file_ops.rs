@@ -33,6 +33,7 @@ async fn move_cache_entries(state: &AppState, old_key: &str, new_key: &str) {
     migrate!(preview_cache);
     migrate!(phash_cache);
     migrate!(exif_overrides);
+    migrate!(reg_detect);
 }
 
 /// copy 成功后：将缓存条目从源路径复制到目标路径（源条目保留）
@@ -50,6 +51,8 @@ async fn copy_cache_entries(state: &AppState, src_key: &str, dst_key: &str) {
     duplicate!(preview_cache);
     duplicate!(phash_cache);
     // exif_overrides 不复制：新文件是独立的，用户若需要可单独编辑
+    // reg_detect 要复制：两份文件像素相同，机身文字读出来的就是同一个机号
+    duplicate!(reg_detect);
 }
 
 /// delete 成功后：主动清除已删文件的缓存，避免等待下次 list_photos 才清理
@@ -64,6 +67,7 @@ async fn remove_cache_entries(state: &AppState, key: &str) {
     evict!(preview_cache);
     evict!(phash_cache);
     evict!(exif_overrides);
+    evict!(reg_detect);
 }
 
 async fn remove_persisted_exif_override(
@@ -883,6 +887,18 @@ pub async fn apply_stage(state: web::Data<AppState>) -> HttpResponse {
     if restore_dirty {
         if let Err(e) = write_trash_manifest(&trash_dir, &trash_manifest).await {
             tracing::warn!("Failed to persist trash manifest after restore: {}", e);
+        }
+    }
+
+    // 机号识别结果在 rename/copy/delete 时跟着文件迁移，内存里已经改好了；
+    // 一批跑完再整体落盘，逐条写会把同一份 JSON 刷几十遍。
+    if applied > 0 {
+        let snapshot = state.reg_detect.read().await.clone();
+        if let Err(e) =
+            crate::registration::persist_detect(&cache_paths::reg_detect(&photos_dir), &snapshot)
+                .await
+        {
+            tracing::warn!("Failed to persist reg detections after batch: {e}");
         }
     }
 

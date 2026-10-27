@@ -61,6 +61,46 @@ pub struct PhotoEntry {
     pub mtime: u64,
 }
 
+/// 图片文字识别出来的机号，按文件版本（mtime+size）存，避免改图后还用老结果。
+/// 文件名里能读出机号时优先用文件名的，识别值只补空缺。
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct DetectedReg {
+    pub mtime: u64,
+    pub size: u64,
+    #[serde(default)]
+    pub regs: Vec<String>,
+    #[serde(default)]
+    pub engine: String,
+}
+
+/// 拍摄点档案：老照片没写 GPS，坐标只能人补。按文件夹记一次，
+/// 再把某个点的照片单独补进 EXIF 覆盖层（见 `spots` 模块）。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Spot {
+    /// 拍摄点名字，例如「01 跑道北端铁丝网」
+    pub name: String,
+    pub lat: f64,
+    pub lon: f64,
+    #[serde(default)]
+    pub note: String,
+}
+
+/// 彩绘关注清单：机号 → 我自己记的名字。数据源没标注这台时，靠它把班认出来。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct WatchItem {
+    /// 彩绘名字，例如「FLYING HONU · 蓝色海龟」
+    pub name: String,
+    #[serde(default)]
+    pub note: String,
+    /// true = 我确认过这台确实刷了彩绘；false 只是留意，数据源另说时算「待核对」
+    #[serde(default = "default_documented")]
+    pub documented: bool,
+}
+
+fn default_documented() -> bool {
+    true
+}
+
 /// 缓存的感知哈希
 #[derive(Clone, Serialize, Deserialize)]
 pub struct CachedHash {
@@ -119,6 +159,14 @@ pub struct AppState {
     pub phash_warmup_running: Arc<Mutex<bool>>,
     /// 相对路径 → 人工编辑后的 EXIF 覆盖值
     pub exif_overrides: Arc<RwLock<HashMap<String, ExifData>>>,
+    /// 相对路径 → 图片文字识别出的机号（文件名读不出机号时用它补）
+    pub reg_detect: Arc<RwLock<HashMap<String, DetectedReg>>>,
+    /// 文件夹（'' 表示库根）→ 拍摄点档案
+    pub spots: Arc<RwLock<HashMap<String, Spot>>>,
+    /// 机号 → 彩绘关注清单（`.photo_viewer/watchlist.json`）
+    pub livery_watch: Arc<RwLock<HashMap<String, WatchItem>>>,
+    /// 「机场/日期」→ 最近一次成功读到的排班提醒，5 分钟内直接复用
+    pub livery_feed: Arc<RwLock<HashMap<String, crate::livery::FeedOutcome>>>,
     /// 串行化会读写 .trash 及 manifest 的批次，避免并发 apply 互相覆盖映射
     pub trash_lock: Arc<tokio::sync::Mutex<()>>,
     /// 照片目录切换代数：切换后递增，用来丢弃旧目录的在途结果
@@ -182,6 +230,11 @@ pub struct PhotoMeta {
     pub exif: ExifData,
     /// 紧凑时间戳 (YYYYMMDDHHMMSS) 用于排序
     pub date_sort_key: i64,
+    /// 机号：文件名里读出来的优先，读不出时用图片文字识别的结果
+    #[serde(default)]
+    pub regs: Vec<String>,
+    /// 机号来源，方便界面说明这是猜的还是写死的
+    pub reg_source: &'static str,
 }
 
 /// 照片查询参数

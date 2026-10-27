@@ -2,7 +2,9 @@ use actix_web::{middleware::Compress, web, App, HttpServer};
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 use tokio::sync::RwLock;
 
-use photo_viewer::{cache_paths, exif_edit, file_ops, handlers, hash, models::AppState};
+use photo_viewer::{
+    cache_paths, exif_edit, file_ops, handlers, hash, livery, models::AppState, registration, spots,
+};
 
 fn env_flag(name: &str) -> bool {
     matches!(
@@ -225,6 +227,10 @@ async fn main() {
         similar_jobs: Arc::new(RwLock::new(HashMap::new())),
         phash_warmup_running: Arc::new(std::sync::Mutex::new(false)),
         exif_overrides: Arc::new(RwLock::new(HashMap::new())),
+        reg_detect: Arc::new(RwLock::new(HashMap::new())),
+        spots: Arc::new(RwLock::new(HashMap::new())),
+        livery_watch: Arc::new(RwLock::new(HashMap::new())),
+        livery_feed: Arc::new(RwLock::new(HashMap::new())),
         trash_lock: Arc::new(tokio::sync::Mutex::new(())),
         dir_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         last_scan: Arc::new(RwLock::new(photo_viewer::models::ScanStatus::default())),
@@ -311,6 +317,60 @@ async fn main() {
             tracing::info!(
                 "Loaded exif overrides from {} ({} entries)",
                 exif_override_load_file.display(),
+                guard.len()
+            );
+        }
+    }
+
+    // 机身文字识别出的机号（.photo_viewer/reg_detect.json）：只用来补文件名读不出的空缺
+    let reg_detect_file = {
+        let pd = state.photos_dir.read().await.clone();
+        cache_paths::reg_detect(&pd)
+    };
+    {
+        let detected = registration::load_detect(&reg_detect_file).await;
+        if !detected.is_empty() {
+            let mut guard = state.reg_detect.write().await;
+            *guard = detected;
+            tracing::info!(
+                "Loaded reg detections from {} ({} entries)",
+                reg_detect_file.display(),
+                guard.len()
+            );
+        }
+    }
+
+    // 手写拍摄点档案（.photo_viewer/spots.json）：老照片没坐标，只能人自己补
+    let spots_file = {
+        let pd = state.photos_dir.read().await.clone();
+        cache_paths::spots(&pd)
+    };
+    {
+        let archive = spots::load_spots(&spots_file).await;
+        if !archive.is_empty() {
+            let mut guard = state.spots.write().await;
+            *guard = archive;
+            tracing::info!(
+                "Loaded spot archive from {} ({} entries)",
+                spots_file.display(),
+                guard.len()
+            );
+        }
+    }
+
+    // 彩绘关注清单（.photo_viewer/watchlist.json）：数据源没标注的机号靠它认
+    let watchlist_file = {
+        let pd = state.photos_dir.read().await.clone();
+        cache_paths::watchlist(&pd)
+    };
+    {
+        let watched = livery::load_watchlist(&watchlist_file).await;
+        if !watched.is_empty() {
+            let mut guard = state.livery_watch.write().await;
+            *guard = watched;
+            tracing::info!(
+                "Loaded livery watchlist from {} ({} entries)",
+                watchlist_file.display(),
                 guard.len()
             );
         }
@@ -486,6 +546,36 @@ async fn main() {
                 )
                 .service(
                     web::resource("/api/exif/update").route(web::post().to(exif_edit::update_exif)),
+                )
+                .service(
+                    web::resource("/api/reg/ocr")
+                        .route(web::post().to(handlers::ocr_photo_reg)),
+                )
+                .service(
+                    web::resource("/api/spots")
+                        .route(web::get().to(spots::list_spots))
+                        .route(web::post().to(spots::save_spot)),
+                )
+                .service(
+                    web::resource("/api/spots/delete")
+                        .route(web::post().to(spots::delete_spot)),
+                )
+                .service(
+                    web::resource("/api/spot/apply")
+                        .route(web::post().to(spots::apply_spot)),
+                )
+                .service(
+                    web::resource("/api/livery/feed")
+                        .route(web::get().to(livery::feed)),
+                )
+                .service(
+                    web::resource("/api/livery/watch")
+                        .route(web::get().to(livery::list_watchlist))
+                        .route(web::post().to(livery::add_watch)),
+                )
+                .service(
+                    web::resource("/api/livery/watch/delete")
+                        .route(web::post().to(livery::remove_watch)),
                 )
                 .service(
                     web::resource("/api/admin/allow_set_dir")

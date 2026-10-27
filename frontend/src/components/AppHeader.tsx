@@ -41,6 +41,8 @@ interface AppHeaderProps {
   onOpenStaged: () => void;
   onOpenTrash: () => void;
   onOpenCompare: () => void;
+  onOpenLivery: () => void;
+  liveryCount: number;
   onOpenShortcuts: () => void;
   onOpenSetDir: () => void;
   onBulkDelete: () => void;
@@ -59,6 +61,8 @@ export function AppHeader({
   onOpenStaged,
   onOpenTrash,
   onOpenCompare,
+  onOpenLivery,
+  liveryCount,
   onOpenShortcuts,
   onOpenSetDir,
   onBulkDelete,
@@ -99,6 +103,12 @@ export function AppHeader({
     },
     { key: 'trash', label: '♻️ 回收站', manageOnly: true, run: onOpenTrash },
     { key: 'compare', label: '◎ 相似对比', run: onOpenCompare },
+    {
+      key: 'livery',
+      label: `🎨 彩绘提醒${liveryCount ? ` (${liveryCount})` : ''}`,
+      title: '读他家机场的排班，提醒今天有哪些值得拍的机号',
+      run: onOpenLivery,
+    },
     { key: 'set-dir', label: '⚙️ 目录', title: '切换照片目录', manageOnly: true, run: onOpenSetDir },
     { key: 'shortcuts', label: '⌨ 快捷键', run: onOpenShortcuts },
   ];

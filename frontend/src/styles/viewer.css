@@ -94,6 +94,24 @@
 .rk.gps-toggle-key{cursor:pointer;text-decoration:underline;text-decoration-style:dotted;text-underline-offset:2px}
 .rk.gps-toggle-key:hover{color:var(--accent)}
 .rv{font-family:var(--mono);font-size:10px;color:var(--info);text-align:right;word-break:break-all}
+/* 机号格：值 + 来源 + 就地识别按钮挤在同一行，窄屏下允许换行而不是压掉按钮 */
+.reg-cell{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.reg-value{color:var(--accent);letter-spacing:.04em}
+.reg-origin{color:var(--hint);font-size:9px}
+.reg-pick{font-family:inherit;font-size:9px;line-height:1;padding:3px 7px;border-radius:3px;border:1px solid var(--border2);background:transparent;color:var(--info);cursor:pointer}
+.reg-pick:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+.reg-pick:disabled{opacity:.45;cursor:not-allowed}
+.reg-error{flex:1 0 100%;text-align:right;color:var(--danger);font-size:9px}
+/* 拍摄点格：档案记在文件夹上，「补给这张」只在这张照片本来没坐标时出现 */
+.spot-cell{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+.spot-value{color:var(--text);font-size:9px}
+.spot-help{font-size:11px;color:var(--muted);line-height:1.6;margin-bottom:12px}
+.spot-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.spot-archive{margin-top:16px;border-top:1px solid var(--border2);padding-top:10px}
+.spot-archive-title{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+.spot-archive-row{display:flex;align-items:center;gap:8px;font-size:11px;padding:4px 0}
+.spot-archive-folder{flex:0 0 34%;color:var(--info);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.spot-archive-value{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .no-exif-note{text-align:center;color:var(--hint);font-size:11px;padding:16px 0}
 
 .gps-mini-map{
