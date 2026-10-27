@@ -46,10 +46,12 @@ const api = async (path, options) => {
 };
 
 const clickText = async (page, selector, text) => {
+  // antd 给两个汉字的按钮中间插了个空格（「保 存」），两边都去掉空白再比。
   const handle = await page.evaluateHandle(
-    (sel, needle) => [...document.querySelectorAll(sel)].find((el) => el.textContent.trim().includes(needle)),
+    (sel, needle) =>
+      [...document.querySelectorAll(sel)].find((el) => el.textContent.replace(/\s+/g, '').includes(needle)),
     selector,
-    text,
+    text.replace(/\s+/g, ''),
   );
   const element = handle.asElement();
   if (!element) throw new Error(`找不到 ${selector} 里的「${text}」`);
@@ -83,6 +85,12 @@ await step('config says whether a feed source is wired up', async () => {
     status === 200 && typeof body?.liveryConfigured === 'boolean' && body.liveryConfigured === false,
     `${status} liveryConfigured=${body?.liveryConfigured}`,
   );
+  // 默认机场是部署配的（LIVERY_DEFAULT_AIRPORT）；临时实例都没设，就该是兜底的 SHA。
+  log(
+    'config exposes defaultAirport',
+    /^[A-Z]{3}$/.test(body?.defaultAirport || '') && body.defaultAirport === 'SHA',
+    `${status} defaultAirport=${body?.defaultAirport}`,
+  );
 });
 
 await step('watch list starts empty and reports the feed flag', async () => {
@@ -110,7 +118,7 @@ await step('airport and day inputs are fenced before any URL is built', async ()
     `/api/livery/feed?airport=${encodeURIComponent("../../etc")}&day=2026-10-27`,
     `/api/livery/feed?airport=${encodeURIComponent("SZX?x=1")}&day=2026-10-27`,
     `/api/livery/feed?airport=SZX&day=${encodeURIComponent('2026-10-27" OR 1=1')}`,
-    `/api/livery/feed?airport=SZX`,
+    `/api/livery/feed`,
   ];
   const codes = [];
   for (const path of bad.slice(0, 3)) codes.push((await api(path)).status);
@@ -121,6 +129,9 @@ await step('airport and day inputs are fenced before any URL is built', async ()
     codes.join(','),
   );
   log('airport is required', missingAirport.status === 400, `${missingAirport.status}`);
+  // day 是可以缺的：后端把没带 day 的查询当成「今天」，只有 airport 才是必填。
+  const todayFallback = await api('/api/livery/feed?airport=SZX');
+  log('omitting day falls back to today', todayFallback.status === 200, `${todayFallback.status}`);
 });
 
 await step('watch list round-trips through the UI', async () => {
@@ -179,6 +190,11 @@ await step('watch list round-trips through the UI', async () => {
     searchValue === REG && page.url().includes(encodeURIComponent(REG)),
     `search="${searchValue}" url=${page.url()}`,
   );
+
+  // 点机号会 jumpToAlbum → onClose()，模态框整个卸载，「删」这一行自然找不到了。
+  // 这不是 bug（跳相册本来就该关窗），所以删除前重新打开提醒面板。
+  await clickText(page, 'button', '彩绘提醒');
+  await page.waitForSelector('.livery-watch-row', { visible: true, timeout: 8000 });
 
   const del = await page.evaluate(
     (reg) => {

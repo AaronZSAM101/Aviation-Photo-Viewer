@@ -113,9 +113,17 @@ GitHub Actions 的 `.github/workflows/test.yml` 只跑这两层加一次 `npm ru
 ## 已知坑
 
 - **套件之间必须重新播种。** `parity.mjs` 会把 `ParitySeed/P1.jpg` 改名成 `PVPBXDXP_RENAMED.jpg`、把 P2/P3/P4 送进回收站，`batch4-ui.mjs` 又要在库里搜 `P1`。共用一个可写实例而不重新 `seed`，后面的套件就会看到 0 张结果 —— `suite.sh` 因此在每个套件前都 seed 一次。
-- **`parity.mjs` 等的是 2939 这个具体数字。** 前端按帧分批挂载，脚本会等卡片补齐再断言，所以 `LIB` 必须指向真实的 Aviation 库；换库要改这个期望值（或用 `BLOCK_THUMBS=1` 的性能探针，它不校验总数）。
+- **`parity.mjs` 的总数从 `/api/photos` 现取，不写死张数。** 前端按帧分批挂载，脚本会等卡片补齐再断言；`LIB` 仍要指向真实的 Aviation 库，因为搜索、GPS 深链和 `probe-manifest.txt` 都依赖真数据的形状。另注意扫描只下降到 3 层目录（`backend/src/utils.rs` 里的 `collect_photo_paths`），更深的路径不进列表，所以「库里有 N 张」和「列表有 M 张」可以不一样。
+- **只读实例的 EXIF 只在内存里。** `READ_ONLY=true` 不落盘，全新图库（库里没有 `.photo_viewer/meta.json`）刚起来那几分钟「N 张含EXIF」远小于总数，stats 文案和查看器信息面板都会红。`parity.mjs` 因此先等两个数追平再断言（`EXIF_WARM_TIMEOUT`，默认 25 分钟）。macOS 上生产实例早就把 meta 写进图库目录，所以一上来就是满的。
 - **`parity.mjs` 会开两个浏览器**（只读实例一个、可写实例一个）。脚本结束时都会关掉，但如果中途超时或被 Ctrl-C，容器会挂着，用 `podman rm -f pv-verify-parity` 收掉。
 - **macOS 上 `/tmp` 没有共享进 Podman 虚拟机。** 临时卷必须放在仓库目录内（`verify/.scratch`），否则容器里 `statfs` 直接报 no such file or directory。
+- **Windows（podman machine + Git Bash）另有一层坑，`suite.sh` 里用 `command -v cygpath` 与 macOS 分支隔开：**
+  - 挂载源必须是宿主原生路径（`D:\...`）。Git Bash 会把 `/d/...` 这类参数改写坏，podman 报 `invalid option type "\\Git\\work"` → 全程 `MSYS_NO_PATHCONV=1` + `cygpath -w`（`hp()`）。
+  - `localhost` 先解析到 `::1`，而 win-ports 只转发 IPv4 → 健康检查一律写 `127.0.0.1`。
+  - 不显式给 `--network` 时 rootless machine 默认走 pasta（容器拿 NAT 地址、不收入站），浏览器容器怎么都连不上应用容器 → 三个实例都 `--network podman`，靠容器 IP 互访。
+  - NTFS 挂进容器后 `utimes` 一律 EPERM，而 `seed.mjs` 要给样本照片铺 mtime（时间分组断言靠它）→ 可写临时库改放 machine 自己的命名卷 `pv-verify-photos` / `pv-verify-probe`。
+  - 命名卷根目录归 root，而套件容器里的 node 跑在 alpine-chrome 的 `chrome`（uid 1000）下 → `fresh_vols` 先 chmod 777；应用容器（root）建出来的 `.trash`、`.photo_viewer` 默认 755，`unlink` 要父目录写权限，`seed.mjs` 清场会 EACCES → Windows 上应用容器统一 `umask 000` 起（`APP_LAUNCH`）。
+  - `core.autocrlf=true` 会把 `probe-manifest.txt` 变成 CRLF，14 条路径统统“文件不存在” → 仓库加了 `.gitattributes` 把这些文件钉成 LF。
 - **`probe-manifest.txt` 挑的是真实库里 14 张小原图**，如果这些文件被改名或删掉，`seed_probe` 会直接报错退出（相似对比就没有可断言的对象）。换一个库时按同样的思路重挑一份小的即可。
 - **不要把宿主目录挂到容器里的 `/lib`、`/usr` 这类路径。** podman 会报 `exec container process (missing dynamic library?) /bin/sh: No such file or directory`，看着像镜像坏了，其实是挂载点盖掉了 glibc。换 `/src` 之类的路径就好。
 - **DNS。** 地图瓦片、`npm ci` 需要 `--dns=8.8.8.8 --dns=1.1.1.1`，虚拟机默认解析器会超时。
@@ -123,6 +131,8 @@ GitHub Actions 的 `.github/workflows/test.yml` 只跑这两层加一次 `npm ru
 - **antd v6 的提示是 `.ant-message-notice`**，不是 `.ant-notification`；选择器写错会误判成“没弹提示”。
 - **查看器的键盘快捷键在输入框聚焦时不生效**（设计如此）。脚本要先 `blur` 或点空白，否则按键断言假失败。
 - **`#loading` 在列表到达后 300 ms 才隐藏**，卡片随后按帧挂载。等 `#loading:not(.show)` 只是首屏完成，卡片数要另外等。
+- **分批队列的两端都是异步的，别用固定 sleep。** 「恢复」只是往队列 POST 一条 op，机器忙（同一台机上只读实例正在给全库提 EXIF）时 POST 还没落地就点「应用」，应用在空队列上返回 `applied:0`，那条 op 随后才进队列 —— 断言就看到「恢复没生效、文件回不来」。`applyStaged` 因此先等队列里真的有这条 restore、应用后再轮询到队列清空（`parity.mjs` 的 `viewer delete -> staged pill -> apply -> trash -> restore`）。
+- **`LiveryModal` 点机号会 `onClose()`**（跳相册是既定行为，不是 bug），所以 `livery.mjs` 里点完机号要重新打开提醒面板才点得到「删」，否则在已经卸载的 DOM 里找不到那一行。
 - **FUSE 图库慢。** 真实库经 Synology Drive 挂载，首次扫描和缩略图很慢；判断“卡住”前先看 `/api/config` 是否已返回。
 - **性能数字有噪声。** 本机跑别的容器（例如 `webaip-pod`）会污染结果，A/B 要交替重复多次，别只看单次滚动均值。
 

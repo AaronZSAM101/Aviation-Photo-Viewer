@@ -1,0 +1,28 @@
+# 仓库里的脚本和数据文件必须以 LF 落盘：Windows 客户端若开了 core.autocrlf=true，
+# checkout 出来就是 CRLF，而 Git Bash 读到的每一行都带 \r —— 按行取路径的地方会整批失效
+# （实测 verify/probe-manifest.txt 的 14 条路径全部"不存在"，suite.sh 自己也会跑出
+#  "command not found"）。macOS/Linux 上这些规则本来就是 no-op。
+* text=auto
+
+*.sh text eol=lf
+*.bash text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.py text eol=lf
+*.rs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.toml text eol=lf
+*.txt text eol=lf
+Containerfile text eol=lf
+.gitignore text eol=lf
+.containerignore text eol=lf
+
+# 二进制
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

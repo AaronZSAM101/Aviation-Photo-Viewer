@@ -30,6 +30,10 @@ ok() { printf '  PASS %s\n' "$1"; }
 bad() { printf '  FAIL %s\n' "$1"; FAILS=$((FAILS + 1)); }
 http() { curl -s -o "$2" -w '%{http_code} %{content_type} %{size_download}' "$1"; }
 
+# Windows(Git Bash) 的 podman.exe 只认宿主原生路径，MSYS 会把 /d/... 改写坏
+export MSYS_NO_PATHCONV=1
+hp() { command -v cygpath >/dev/null 2>&1 && cygpath -w "$1" || printf '%s' "$1"; }
+
 podman rm -f "$NAME" >/dev/null 2>&1
 rm -rf "$HERE/.scratch/raw"
 mkdir -p "$RAW"
@@ -41,12 +45,12 @@ SRC2=$(find "$LIB" -maxdepth 3 -type f -iname '*.jpg' -size +300k 2>/dev/null | 
 cp "$SRC2" "$RAW/_inner.jpg"
 cp "$SRC1" "$RAW/IMG_0001.jpg"
 # 参数要整体加引号：bash 会把词里的 < 当成重定向
-podman run --rm --security-opt label=disable -v "$RAW:/raw" --entrypoint exiftool \
+podman run --rm --security-opt label=disable -v "$(hp "$RAW"):/raw" --entrypoint exiftool \
   "$IMAGE" -overwrite_original "-ThumbnailImage<=/raw/_inner.jpg" /raw/IMG_0001.jpg 2>&1 | sed 's/^/  /'
 mv "$RAW/IMG_0001.jpg" "$RAW/IMG_0001.CR2"
 # 先把 decode.rs 依赖的机制单独验一遍：-b -q 取标签要能拿回足够大的内嵌图，
 # 而且 exiftool 得正常退出（warning 走 stderr，不影响 stdout 的字节）
-INSIDE=$(podman run --rm --security-opt label=disable -v "$RAW:/raw" --entrypoint /bin/sh \
+INSIDE=$(podman run --rm --security-opt label=disable -v "$(hp "$RAW"):/raw" --entrypoint /bin/sh \
   "$IMAGE" -c 'exiftool -b -q "-ThumbnailImage" /raw/IMG_0001.CR2 2>/dev/null | wc -c')
 echo "  内嵌图取回 $INSIDE 字节"
 [ "$INSIDE" -ge 40000 ] 2>/dev/null && ok "exiftool 能把内嵌图按字节取出来" || bad "内嵌图取回 $INSIDE 字节，够不到 40KB 门槛"
@@ -59,7 +63,7 @@ ls -la "$RAW" | sed 's/^/  /'
 
 say "起临时实例（$IMAGE，端口 $PORT）"
 podman run -d --name "$NAME" --security-opt label=disable -p "$PORT:80" \
-  -e READ_ONLY=false -e PHASH_WARMUP=false -v "$RAW:/photos:rw" "$IMAGE" >/dev/null || exit 2
+  -e READ_ONLY=false -e PHASH_WARMUP=false -v "$(hp "$RAW"):/photos:rw" "$IMAGE" >/dev/null || exit 2
 BASE="http://$NAME"
 for _ in $(seq 1 30); do
   podman exec "$NAME" curl -sf -o /dev/null localhost:80/api/config && break

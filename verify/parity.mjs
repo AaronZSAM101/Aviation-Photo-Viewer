@@ -96,6 +96,34 @@ const waitFor = async (page, fn, timeout = 25000) => {
   }
 };
 
+// 只读实例的 EXIF 只在内存里，由后台一批批提，全新图库要等几分钟才「全库含EXIF」。
+// 页面不会自己去重取列表，所以在 node 侧盯接口数字，提齐了再刷新页面让 stats 跟上。
+const waitExifWarm = async (page, total) => {
+  const warmCount = () =>
+    fetch(`${READ}/api/photos`)
+      .then((r) => r.json())
+      .then((l) => l.filter((p) => Object.values(p.exif || {}).some((v) => v !== null && v !== undefined && v !== '')).length);
+  const deadline = Date.now() + Number(process.env.EXIF_WARM_TIMEOUT || 1500000);
+  let last = -1;
+  for (;;) {
+    const now = await warmCount().catch(() => -1);
+    if (now >= total || Date.now() > deadline) break;
+    if (now !== last) {
+      console.log(`  ... 后台提取 EXIF ${now}/${total}`);
+      last = now;
+    }
+    await sleep(10000);
+  }
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  let stats = null;
+  for (let i = 0; i < 40; i++) {
+    stats = await statText(page);
+    if (stats?.includes(`${total} 张含EXIF`)) break;
+    await sleep(3000);
+  }
+  return stats;
+};
+
 const url = (page) => page.evaluate(() => location.pathname + location.search);
 
 // antd Select: open the n-th select then click the option whose text matches.
@@ -311,16 +339,17 @@ await step('gallery renders real thumbs', async () => {
   log('gallery renders real thumbs', ok, ok ? '' : 'no thumbnail reached naturalWidth');
 });
 
+// 期望清单走 node 侧 HTTP：冷实例上 /api/photos 要几十秒，挂在浏览器协议里只会白白吃超时。
+// 总数不写死：换一张库、或同一张库多下载了几张，断言就该跟着清单走。
+const expected = await fetch(`${READ}/api/photos`)
+  .then((r) => r.json())
+  .then((l) => l.map((p) => (p.folder ? `${p.folder}/${p.filename}` : p.filename)));
+if (!Array.isArray(expected) || expected.length === 0) throw new Error('expected list is empty');
+
 // 列表改成行级窗口后，DOM 里只保留视口附近那几十张卡片。
-// 契约相应地从“2939 张全部挂载”改成三条：窗口有界、从上到下滚一遍能碰到每一张、
+// 契约相应地从“整库全部挂载”改成三条：窗口有界、从上到下滚一遍能碰到每一张、
 // 滚动条长度不随挂载伸缩（占位内边距算对了）。
 await step('gallery windows the list', async () => {
-  // 期望清单走 node 侧 HTTP：冷实例上 /api/photos 要几十秒，挂在浏览器协议里只会白白吃超时。
-  const expected = await fetch(`${READ}/api/photos`)
-    .then((r) => r.json())
-    .then((l) => l.map((p) => (p.folder ? `${p.folder}/${p.filename}` : p.filename)));
-  if (!Array.isArray(expected) || expected.length === 0) throw new Error('expected list is empty');
-
   await page.evaluate(() => {
     window.__sweep = { seen: new Set(), peak: 0, height0: 0, height1: 0 };
     document.scrollingElement.scrollTop = 0;
@@ -369,8 +398,12 @@ await step('gallery windows the list', async () => {
   );
   log('scrollbar length stable while windowing', stable, `${sweep.height0} → ${sweep.height1}`);
 });
-const stats = await statText(page);
-log('stats string', /2939 张.*2939 张含EXIF.*全部.*无时间分组/.test(stats || ''), stats);
+const stats = await waitExifWarm(page, expected.length);
+log(
+  'stats string',
+  new RegExp(`${expected.length} 张.*${expected.length} 张含EXIF.*全部.*无时间分组`).test(stats || ''),
+  stats,
+);
 
 await step('read-only hides write controls', async () => {
   const labels = await page.evaluate(() => document.querySelector('body').innerText);
@@ -411,7 +444,7 @@ await step('search filters + q param', async () => {
     return !!el && location.search.includes('q=B-52');
   }, 8000);
   const n = await page.evaluate(() => document.querySelectorAll('.card').length);
-  log('search filters + q param', ok && n > 0 && n < 2939, `cards=${n} url=${await url(page)}`);
+  log('search filters + q param', ok && n > 0 && n < expected.length, `cards=${n} url=${await url(page)}`);
   await shot(page, '02-search');
   await input.evaluate((el) => {
     el.value = '';
@@ -503,10 +536,12 @@ await step('viewer info panel + grids + rgb + hist', async () => {
     },
     5000,
   );
-  const exifText = await page.evaluate(() => {
+  // 「机号」「拍摄点」两行是后加的，ISO/焦距 被顶到 160 字之后，所以断言看全文、日志只截一段。
+  const exifFull = await page.evaluate(() => {
     const el = document.getElementById('vinfo');
-    return el ? el.innerText.replace(/\s+/g, ' ').slice(0, 160) : null;
+    return el ? el.innerText.replace(/\s+/g, ' ') : null;
   });
+  const exifText = (exifFull || '').slice(0, 160);
   await page.keyboard.press('g');
   await page.keyboard.press('f');
   const grids = await page.evaluate(() => ({
@@ -525,7 +560,7 @@ await step('viewer info panel + grids + rgb + hist', async () => {
     infoDefault &&
       closed &&
       reopened &&
-      /ISO|曝光|焦距|镜头|GPS/i.test(exifText || '') &&
+      /ISO|曝光|焦距|镜头|GPS/i.test(exifFull || '') &&
       grids.grid &&
       grids.fine &&
       charts.rgb >= 2 &&
@@ -699,9 +734,16 @@ async function applyStaged(page) {
     await sleep(900);
   }
   await sleep(800);
-  const remaining = await page.evaluate(() =>
-    fetch('/api/stage/list').then((r) => r.json()).then((l) => l.length),
-  );
+  // 应用是异步的：机器忙（同一台机器上只读实例正在给全库提 EXIF）时 800 ms 内队列还没落空，
+  // 一次性的读法会把"还在跑"读成"跑完了还剩 N 条"。等到空或者超时。
+  let remaining = 0;
+  for (let i = 0; i < 20; i += 1) {
+    remaining = await page.evaluate(() =>
+      fetch('/api/stage/list').then((r) => r.json()).then((l) => l.length),
+    );
+    if (remaining === 0) break;
+    await sleep(500);
+  }
   return { clicked, remaining };
 }
 
@@ -866,7 +908,20 @@ await step('viewer delete -> staged pill -> apply -> trash -> restore', async ()
     btn.click();
     return `${sp} -> ${btn.textContent.trim()}`;
   }, victim);
-  await sleep(700);
+  if (!restoreBtn) throw new Error('victim row has no restore button');
+  // 「恢复」只是往队列里 POST 一条 op。固定 sleep 之后马上去点「应用」，
+  // 机器忙时 op 还没进队列，应用点在了空队列上（返回 applied:0），随后那条 restore
+  // 才落进列表——看起来就像恢复失败、文件回不来。等队列里真有这条 restore 再应用。
+  // 轮询走 node 侧 HTTP：页面里那条 fetch 要抢 CDP 通道，而这一刻 UI 正忙着刷新回收站。
+  let queued = false;
+  for (let i = 0; i < 50 && !queued; i += 1) {
+    const list = await fetch(`${WRITE}/api/stage/list`)
+      .then((r) => r.json())
+      .catch(() => []);
+    queued = list.some((o) => o.kind === 'restore' && o.dst === victim);
+    if (!queued) await sleep(300);
+  }
+  if (!queued) throw new Error(`restore op never reached the stage queue: ${victim}`);
   if (!trash.some((t) => t.original === victim)) throw new Error(`victim not in trash: ${victim}`);
   const secondApply = await applyStaged(wp);
   const back = await wp.evaluate(
